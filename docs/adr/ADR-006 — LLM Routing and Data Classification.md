@@ -1,4 +1,4 @@
-# ADR-006 — LLM Routing and Data Classification
+# ADR-006 - LLM Routing and Data Classification
 
 Status: Accepted
 
@@ -15,9 +15,9 @@ Enterprise GenAI Platform должна поддерживать
 
 Одновременно корпоративные запросы могут содержать:
 
-- public data;
-- internal data;
-- confidential data;
+- общедоступные данные;
+- внутренние данные;
+- конфиденциальные данные;
 - данные с дополнительными ограничениями организации.
 
 Передача таких данных во внешний LLM provider
@@ -28,13 +28,13 @@ Enterprise GenAI Platform должна поддерживать
 
 Простой fallback:
 
-Local LLM unavailable → send request to External LLM
+Local LLM недоступна -> отправить запрос внешней LLM
 
 является неприемлемым,
 если внешнему provider запрещено получать
 данный класс корпоративных данных.
 
-## Decision (Решение)
+## Решение
 
 Все обращения к LLM должны выполняться
 через LLM Gateway.
@@ -44,7 +44,7 @@ AI services не должны напрямую интегрироваться
 
 Каждый LLM request должен содержать
 необходимую metadata для применения routing policy,
-включая data classification.
+включая классификацию данных.
 
 Начальная классификация:
 
@@ -55,10 +55,10 @@ AI services не должны напрямую интегрироваться
 LLM Gateway должен выбирать модель
 на основании:
 
-- data classification;
+- классификация данных;
 - разрешённых providers;
 - availability модели;
-- model capabilities;
+- возможности модели;
 - политики организации.
 
 Пример базовой routing policy:
@@ -96,15 +96,15 @@ LLM Gateway также отвечает за:
 LLM Gateway не определяет,
 имеет ли пользователь доступ к документу.
 
-User/document authorization выполняется
-до передачи данных в LLM layer.
+Авторизация пользователя/документа
+до передачи данных на уровень LLM.
 
-## Alternatives Considered (Рассмотренные альтернативы)
+## Рассмотренные альтернативы
 
-### Alternative A — Direct Provider Access (Прямой доступ к поставщику услуг)
+### Альтернатива A - Прямой доступ к поставщику услуг
 
-Каждый AI service самостоятельно обращается
-к OpenAI, локальной LLM или другим providers.
+Каждый AI service самостоятельно интегрируется
+с конкретными LLM провайдерами внешними или локальными.
 
 Плюсы:
 
@@ -115,13 +115,13 @@ User/document authorization выполняется
 Минусы:
 
 - provider logic дублируется;
-- сложнее контролировать data leakage;
-- разные сервисы могут применять разные security rules;
+- сложнее контролировать утечку данных;
+- разные сервисы могут применять разные правила безопасности;
 - сложнее fallback;
 - сложнее централизованно учитывать tokens и usage;
 - сильная связанность AI services с конкретными providers.
 
-### Alternative B — Always Use External LLM
+### Альтернатива B - Всегда используйте внешнюю LLM
 
 Все запросы отправляются внешнему provider.
 
@@ -139,7 +139,7 @@ User/document authorization выполняется
 - стоимость;
 - отсутствие полного контроля над inference environment.
 
-### Alternative C — Always Use Local LLM
+### Альтернатива C - Всегда используйте локальную LLM.
 
 Все запросы выполняются локально.
 
@@ -157,7 +157,7 @@ User/document authorization выполняется
 - сложнее масштабирование;
 - необходимо самостоятельно обслуживать inference stack.
 
-### Alternative D — Policy-Based LLM Gateway (Шлюз для LLM на основе политик)
+### Альтернатива D - шлюз LLM на основе политик
 
 Все обращения проходят через LLM Gateway,
 который выбирает provider
@@ -165,11 +165,11 @@ User/document authorization выполняется
 
 Плюсы:
 
-- централизованный security control;
+- централизованный контроль безопасности;
 - единый provider abstraction;
-- controlled fallback;
+- управляемый fallback;
 - возможность использовать local и external models;
-- централизованный monitoring и usage accounting;
+- централизованный мониторинг и usage accounting;
 - AI services не зависят от конкретного provider.
 
 Минусы:
@@ -178,11 +178,11 @@ User/document authorization выполняется
 - дополнительный network hop;
 - Gateway становится важным infrastructure component;
 - требуется высокая доступность Gateway;
-- routing policies (политики маршрутизации) необходимо поддерживать и тестировать.
+- routing policies необходимо поддерживать и тестировать.
 
-## Consequences (Последствия)
+## Последствия
 
-### Positive
+### Положительный
 
 - снижается риск неконтролируемой передачи данных;
 - правила работы с LLM централизованы;
@@ -192,29 +192,29 @@ User/document authorization выполняется
 - упрощается централизованный token и usage accounting;
 - можно постепенно добавлять новых providers.
 
-### Negative
+### Отрицательный
 
 - LLM Gateway становится критическим компонентом;
 - routing policy усложняет систему;
 - необходима data classification;
 - ошибки классификации могут привести
   к неправильному routing;
-- потребуется monitoring availability (доступность) моделей;
+- потребуется мониторинг доступности модели;
 - потребуется тестирование fallback policy;
-- дополнительный network hop увеличивает latency (задержка).
+- дополнительный сетевой переход увеличивает задержку.
 
-## Related Requirements (Связанные требования)
+## Связанные требования
 
-- Security;
-- Availability;
-- Data Minimization;
-- Fail Secure (Безопасный);
+- Безопасность;
+- Доступность;
+- Минимизация данных;
+- Fail Secure;
 - невозможность передачи запрещённых данных внешнему provider;
 - поддержка Local и External LLM;
-- controlled fallback.
+- управляемый откат.
 
-## Related ADR (Связанный ADR)
+## Связанный ADR
 
-- ADR-001 — Use .NET 10 and Python;
-- ADR-003 — Application Architecture;
-- ADR-004 — Sync and Async Communication.
+- ADR-001 — Использование .NET 10 и Python;
+- ADR-003 — Архитектура приложения;
+- ADR-004 — Синхронное и асинхронное взаимодействие.

@@ -1,4 +1,4 @@
-# ADR-002 — Use PostgreSQL and pgvector for persistent and vector data
+# ADR-002 - Использование PostgreSQL and pgvector для хранения постоянных и vector data
 
 Status: Accepted
 
@@ -46,9 +46,9 @@ Enterprise GenAI Platform должна хранить несколько тип�
 и будет уточняться по результатам benchmarks
 и реальной эксплуатации.
 
-## Decision (Решение)
+## Решение
 
-Использовать PostgreSQL как основной persistent source of truth (постоянный источник достоверных данных).
+Использовать PostgreSQL как основной источник достоверных данных.
 
 Использовать расширение pgvector
 для хранения embeddings и выполнения vector search.
@@ -65,15 +65,15 @@ Document metadata, ACL, chunks и embeddings
 должен рассматриваться только при наличии измеримых причин,
 например:
 
-- pgvector не обеспечивает требуемый latency (задержка);
+- pgvector не обеспечивает требуемый задержки;
 - недостаточна производительность при целевом объёме данных;
 - требуется независимое масштабирование vector search;
 - специализированная БД предоставляет необходимые возможности,
   которых недостаточно в PostgreSQL.
 
-## Alternatives Considered (Рассмотренные альтернативы)
+## Рассмотренные альтернативы
 
-### Alternative A — PostgreSQL + pgvector
+### Альтернатива A - PostgreSQL + pgvector
 
 Плюсы:
 
@@ -94,7 +94,7 @@ Document metadata, ACL, chunks и embeddings
 - необходимо правильно настраивать индексы и запросы;
 - при росте нагрузки может потребоваться разделение workloads.
 
-### Alternative B — PostgreSQL + Qdrant
+### Альтернатива B - PostgreSQL + Qdrant
 
 Плюсы:
 
@@ -105,13 +105,13 @@ Document metadata, ACL, chunks и embeddings
 
 Минусы:
 
-- появляется второй datastore;
-- сложнее consistency между PostgreSQL и Qdrant;
-- сложнее backup / restore;
-- необходимо синхронизировать document lifecycle и vector data;
-- выше operational complexity.
+- появление второго хранилища данных;
+- более сложная согласованность между PostgreSQL и Qdrant;
+- более сложное backup / restore;
+- необходимо синхронизировать жизненный цикл документов и vector data;
+- выше эксплуатационная сложность.
 
-### Alternative C — PostgreSQL + Weaviate
+### Альтернатива C - PostgreSQL + Weaviate
 
 Плюсы:
 
@@ -126,13 +126,13 @@ Document metadata, ACL, chunks и embeddings
 - необходимость синхронизации с основной relational database;
 - часть возможностей может быть избыточна для первой версии.
 
-### Alternative D — PostgreSQL + OpenSearch / Elasticsearch
+### Альтернатива D - PostgreSQL + OpenSearch / Elasticsearch
 
 Плюсы:
 
 - мощный full-text search;
-- хорошо подходит для hybrid search;
-- развитая search ecosystem.
+- хорошо подходит для гибридного поиска;
+- развитая поисковая экосистема.
 
 Минусы:
 
@@ -142,41 +142,41 @@ Document metadata, ACL, chunks и embeddings
 - избыточно до появления требований,
   оправдывающих отдельный search cluster.
 
-## Consequences (Последствия)
+## Последствия
 
-### Positive
+### Положительный
 
 - архитектура первой версии остаётся проще;
-- уменьшается количество infrastructure components;
+- количество компонентов инфраструктуры;
 - ACL, metadata и embeddings можно использовать
-  в рамках одного data platform;
+  в рамках одной платформы данных;
 - проще обеспечить consistency;
 - проще backup и recovery;
 - pgvector позволяет начать разработку RAG
   без отдельной vector database;
 - сохраняется возможность миграции позже.
 
-### Negative
+### Отрицательный
 
 - PostgreSQL получает дополнительный vector workload;
 - потребуется benchmark vector search;
 - при росте нагрузки могут понадобиться
   отдельные read replicas или специализированный vector store;
-- возможная будущая миграция потребует изменения retrieval layer;
+- возможная будущая миграция потребует изменения search layer;
 - необходимо следить за размером индексов и производительностью запросов.
 
-## Related Requirements (Связанные требования)
+## Связанные требования
 
-- Performance;
-- Scalability;
-- Security;
-- Recoverability;
-- document-level access control;
-- RAG retrieval;
+- Производительность;
+- Масштабируемость;
+- Безопасность;
+- Возможность восстановления;
+- Управление доступом на уровне документов;
+- Поиск в рамках RAG;
 - хранение до 10 000 000 chunks.
 
-## Related ADR (Связанные ADR)
+## Связанные ADR
 
-- ADR-003 — Application Architecture;
-- ADR-004 — Sync and Async Communication;
-- ADR-005 — Background Job Mechanism.
+- ADR-003 - Архитектура приложения;
+- ADR-004 - Синхронное и асинхронное взаимодействие;
+- ADR-005 - Background Job Mechanism.

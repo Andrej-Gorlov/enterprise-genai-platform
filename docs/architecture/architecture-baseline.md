@@ -4,7 +4,7 @@ Version: 1.0
 
 Status: Accepted
 
-## 1. Purpose (Цель)
+## 1. Цель
 
 Документ фиксирует исходную архитектурную конфигурацию
 Enterprise GenAI Platform перед началом реализации.
@@ -12,19 +12,19 @@ Enterprise GenAI Platform перед началом реализации.
 Изменение значимых архитектурных решений должно
 фиксироваться через ADR.
 
-## 2. Application Architecture
+## 2. Архитектура приложения
 
 Core business backend реализуется как Modular Monolith
 на .NET 10 / ASP.NET Core.
 
 Внутри Core API выделяются логические модули:
 
-- Identity;
-- Chats;
-- Documents;
-- Authorization;
-- Audit;
-- Integrations.
+- Идентификация;
+- Чаты;
+- Документы;
+- Авторизация;
+- Аудит;
+- Интеграции.
 
 Выделение этих модулей в отдельные микросервисы
 на этапе MVP не планируется.
@@ -36,87 +36,83 @@ Core business backend реализуется как Modular Monolith
 - характером нагрузки;
 - масштабированием;
 - failure model;
-- lifecycle.
+- жизненный цикл.
 
-## 3. Application Containers
+## 3. Контейнеры приложений
 
-### Web Application
+### Web приложение
 
-Technology:
+Технологии:
 
 - React;
 - TypeScript;
 - Vite.
 
-Responsibility:
-
-Пользовательский интерфейс платформы.
+Ответственность: Пользовательский интерфейс платформы.
 
 ### Core API
 
-Technology:
+Технологии:
 
 - .NET 10;
 - ASP.NET Core.
 
-Responsibility:
+Ответственность:
 
-- business logic;
-- authentication / authorization;
-- chats;
-- documents;
-- audit;
-- platform API;
+- бизнес логика;
+- аутентификация/авторизация;
+- чаты;
+- документы;
+- аудит;
+- API платформы;
 - orchestration прикладных операций.
 
 ### AI Orchestrator
 
-Technology:
+Технологии:
 
 - Python;
 - FastAPI.
 
-Responsibility:
+Ответственность:
 
-- RAG pipeline;
-- retrieval;
-- context construction;
-- AI workflows.
+- конвейер RAG;
+- поиск;
+- формирование контекста;
+- рабочие процессы AI.
 
-### Document Ingestion Worker
+### Модуль загрузки документов
 
-Technology:
+Технологии:
 
 - Python.
 
-Responsibility:
-
-Асинхронная обработка документов:
+Ответственность: Асинхронная обработка документов:
 
 extract
-→ clean
-→ chunk
-→ embeddings
-→ indexing.
+-> clean
+-> chunk
+-> embeddings
+-> indexing.
 
 ### LLM Gateway
 
-Technology:
+Технологии:
 
 - .NET 10;
 - ASP.NET Core.
 
-Responsibility:
+Ответственность:
 
 Единая точка доступа к LLM.
 
 На этапе MVP используется один внешний LLM provider.
 
-## 4. Data and Storage
+## 4. Данные и хранение
 
-### Platform Database
+### База данных платформы
 
-Technology:
+Технологии:
 
 - PostgreSQL;
 - pgvector.
@@ -124,17 +120,17 @@ Technology:
 Используется для:
 
 - пользователей;
-- chats;
-- messages;
-- documents metadata;
+- чатов;
+- сообщений;
+- метаданных документов;
 - ACL;
-- audit metadata;
+- метаданных аудита;
 - chunks;
 - embeddings.
 
 ### Object Storage
 
-Technology:
+Технологии:
 
 S3-compatible Object Storage.
 
@@ -145,9 +141,9 @@ S3-compatible Object Storage.
 Используется для хранения оригинальных документов
 и других бинарных файлов.
 
-## 5. Authentication and Authorization
+## 5. Аутентификация и авторизация
 
-Для authentication используется OIDC-compatible
+Для аутентификации используется OIDC-compatible
 Identity Provider.
 
 Для локальной разработки предполагается Keycloak.
@@ -166,7 +162,7 @@ Identity Provider.
 Проверка доступа должна выполняться до передачи
 защищённого содержимого в LLM.
 
-## 6. AI and LLM
+## 6. AI и LLM
 
 Первым внешним LLM provider используется OpenAI.
 
@@ -178,7 +174,7 @@ AI Orchestrator не должен напрямую зависеть
 Local LLM и multi-provider routing
 не входят в первую версию MVP.
 
-## 7. Asynchronous Processing
+## 7. Асинхронная обработка
 
 Для фоновой обработки документов используется RabbitMQ.
 
@@ -194,38 +190,38 @@ RabbitMQ отвечает за доставку работы,
 Пример:
 
 UPLOADED
-→ QUEUED
-→ PROCESSING
-→ READY
+-> QUEUED
+-> PROCESSING
+-> READY
 
 или:
 
 PROCESSING
-→ FAILED.
+-> FAILED.
 
-## 8. Communication Model
+## 8. Модель коммуникации
 
 Синхронное взаимодействие используется
 для пользовательских request/response операций.
 
 Асинхронное взаимодействие используется
 для long-running background workloads,
-в частности document ingestion.
+в частности приема документов.
 
 ## 9. Security Baseline
 
 Применяются следующие принципы:
 
-- Deny by Default (Запрет по умолчанию);
-- Least Privilege (Принцип минимальных привилегий);
-- Defense in Depth (Эшелонированная оборона);
-- Fail Secure (Безопасный);
-- Authorization Before Data Exposure (Авторизация перед раскрытием данных);
-- Authorization at the Point of Action (Авторизация в момент выполнения действия);
-- LLM Is Not a Security Authority (LLM не является авторитетным источником в вопросах безопасности.);
-- Retrieved Content Is Untrusted (Полученным данным нельзя доверять).
+- Запретить по умолчанию;
+- Принцип минимальных привилегий;
+- Эшелонированная оборона;
+- Безопасность;
+- Авторизация перед раскрытием данных;
+- Авторизация в момент выполнения действия;
+- LLM не является авторитетным следствием в области безопасности;
+- Полученным данным нельзя доверять.
 
-## 10. MVP Deployment
+## 10. Развертывание MVP
 
 На этапе MVP локальное окружение разворачивается
 с помощью Docker Compose.
@@ -234,14 +230,14 @@ Kubernetes и Helm не входят в MVP.
 
 ## 11. Related ADR
 
-- ADR-001 — .NET and Python;
-- ADR-002 — PostgreSQL and pgvector;
-- ADR-003 — Application Boundaries;
-- ADR-004 — Synchronous and Asynchronous Communication;
-- ADR-005 — Background Job Mechanism;
-- ADR-006 — LLM Routing and Data Classification.
+- ADR-001 - .NET and Python;
+- ADR-002 - PostgreSQL and pgvector;
+- ADR-003 - Application Boundaries;
+- ADR-004 - Synchronous and Asynchronous Communication;
+- ADR-005 - Background Job Mechanism;
+- ADR-006 - LLM Routing and Data Classification.
 
-## 12. MVP Boundary
+## 12. Границы MVP
 
 Функциональные границы первой версии определены в:
 

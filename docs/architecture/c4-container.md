@@ -1,4 +1,4 @@
-# C4 — Container Diagram
+# C4 - Диаграмма контейнеров
 
 ## Enterprise GenAI Platform
 
@@ -11,40 +11,41 @@ Container Diagram показывает основные исполняемые �
 
 ### Web Application
 
-Responsibility:
+Ответственность:
 Предоставляет пользовательский интерфейс платформы:
 чат, работу с документами, историю диалогов,
 просмотр источников и административные функции.
 
-Technology:
+Технологии:
 React + TypeScript + Vite.
 
-Why separate:
-Frontend имеет отдельную ответственность, lifecycle и deployment.
+Зачем разделять:
+Frontend имеет отдельную ответственность, жизненный цикл и развертывание.
 Он не должен иметь прямого доступа к базам данных,
 LLM или внутренним AI-компонентам.
 
-Main dependencies:
+Основные зависимости:
+
 - Core API;
 - Corporate Identity Provider в рамках authentication flow.
 
-
 ### Core API
 
-Responsibility:
+Ответственность:
 Предоставляет API для frontend, реализует бизнес-логику платформы,
 управляет пользователями, чатами, документами,
 authorization и координирует работу внутренних сервисов.
 
-Technology:
+Технологии:
 .NET 10 / ASP.NET Core.
 
-Why separate:
+Зачем разделять:
 Является основной business/application boundary платформы.
 Отделяет пользовательский интерфейс от AI,
 хранилищ и корпоративных интеграций.
 
-Main dependencies:
+Основные зависимости:
+
 - Platform Database;
 - Object Storage;
 - Redis;
@@ -53,96 +54,87 @@ Main dependencies:
 - Corporate Business Systems;
 - Corporate SIEM.
 
-
 ### AI Orchestrator
 
-Responsibility:
+Ответственность:
 Оркестрирует AI workflow.
 
 Например:
 
 retrieval
-→ reranking
-→ context construction
-→ prompt construction
-→ agent/tool execution
-→ LLM request
-→ processing result.
+-> reranking
+-> context construction
+-> prompt construction
+-> agent/tool execution
+-> LLM request
+-> processing result.
 
-Technology:
+Технологии:
 Python + FastAPI.
 
-Why separate:
-AI-компоненты имеют собственную Python/ML-экосистему,
+Зачем разделять:
+AI компоненты имеют собственную Python/ML экосистему,
 другой характер нагрузки и могут масштабироваться
 независимо от основного backend.
 
-Main dependencies:
+Основные зависимости:
+
 - LLM Gateway;
 - Platform Database / pgvector;
 - Redis;
 - разрешённые tools/API.
 
-
 ### Document Ingestion Worker
 
-Responsibility:
-Асинхронно обрабатывает документы:
+Технологии:
 
-extract
-→ clean
-→ chunk
-→ embeddings
-→ indexing.
+.NET 10 Worker Service.
 
-Technology:
-Python.
+Ответственность:
 
-Why separate:
-Обработка документов может занимать много времени
-и потреблять значительные CPU/GPU-ресурсы.
-Она не должна блокировать HTTP API и должна иметь возможность
-масштабироваться независимо.
+- получение ingestion jobs из RabbitMQ;
+- загрузка документов из Object Storage;
+- извлечение текста;
+- очистка;
+- chunking;
+- управление состоянием ingestion;
+- сохранение результатов.
 
-Main dependencies:
-- Object Storage;
-- Platform Database / pgvector;
-- Corporate Document Repositories;
-- механизм асинхронных заданий.
-
+AI/ML-specific операции, требующие Python ecosystem,
+делегируются Python AI-компонентам.
 
 ### LLM Gateway
 
-Responsibility:
+Ответственность:
 Предоставляет единый интерфейс обращения к LLM.
 
 Отвечает за:
 
-model routing;
+маршрутизацию моделей;
 provider abstraction;
-timeouts;
-retry;
+тайм-ауты;
+повторные попытки;
 fallback;
 rate limiting;
 token accounting;
 policy enforcement.
 
-Technology:
+Технологии:
 .NET 10 / ASP.NET Core.
 
-Why separate:
+Зачем разделять:
 Централизует доступ ко всем LLM и не позволяет
-каждому AI-сервису самостоятельно интегрироваться
+каждому AI сервису самостоятельно интегрироваться
 с разными провайдерами.
 
-Main dependencies:
+Основные зависимости:
+
 - Local LLM Inference;
 - External LLM Provider.
 
-
 ### Platform Database
 
-Responsibility:
+Ответственность:
 Хранит долговременные данные платформы:
 
 users;
@@ -153,76 +145,74 @@ chunks;
 embeddings;
 другие persistent данные.
 
-Technology:
+Технологии:
 PostgreSQL + pgvector.
 
-Why separate:
-Является основным persistent source of truth
+Зачем разделять:
+ты являешься постоянным источником истины
 и имеет отдельные требования к backup,
 recovery, consistency и масштабированию.
 
-Main dependencies:
+Основные зависимости:
 Не зависит от прикладных контейнеров.
-Используется Core API, AI Orchestrator и Ingestion Worker.
-
+Используется Core API, AI Orchestrator и Document Ingestion Worker.
 
 ### Object Storage
 
-Responsibility:
+Ответственность:
 Хранит бинарные файлы:
 
-original documents;
-generated files;
+оригинальные документы;
+сгенерированные файлы;
 другие крупные объекты.
 
-Technology:
+Технологии:
 S3-compatible Object Storage.
-Для локального проекта — MinIO.
+Для локального проекта - MinIO.
 
-Why separate:
+Зачем разделять:
 Большие бинарные файлы нецелесообразно смешивать
 с основной реляционной базой данных.
 
-Main dependencies:
+Основные зависимости:
 Используется Core API и Document Ingestion Worker.
-
 
 ### Redis
 
-Responsibility:
+Ответственность:
 Хранит временные данные и cache,
 к которым нужен быстрый доступ.
 
-Technology:
+Технологии:
 Redis.
 
-Why separate:
+Зачем разделять:
 Позволяет получать временные и часто используемые данные
 быстрее основной базы.
 
 Redis не является source of truth
 для критичных данных платформы.
 
-Main dependencies:
+Основные зависимости:
 Используется Core API и AI Orchestrator.
-
 
 ### Local LLM Inference
 
-Responsibility:
+Ответственность:
 Выполняет inference локально размещённых LLM.
 
-Technology:
+Технологии:
 vLLM.
 
 В дальнейшем:
 GPU runtime и локальные модели, например Qwen или GPT-OSS.
 
-Why separate:
+Зачем разделять:
 Позволяет выполнять AI inference внутри инфраструктуры организации
 и снижает необходимость передачи корпоративных данных
-внешним LLM-провайдерам.
+внешним LLM провайдерам.
 
-Main dependencies:
+Основные зависимости:
+
 - model weights;
 - GPU/compute infrastructure.

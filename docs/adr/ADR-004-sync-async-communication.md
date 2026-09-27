@@ -1,4 +1,4 @@
-# ADR-004 — Use synchronous and asynchronous communication based on workload type
+# ADR-004 - Использование синхронного и асинхронного взаимодействия в зависимости от типа workload
 
 Status: Accepted
 
@@ -12,7 +12,7 @@ Enterprise GenAI Platform содержит разные типы операци�
 
 - получение данных пользователем;
 - отправка AI-вопроса;
-- authorization;
+- авторизация;
 - вызов LLM;
 - выполнение read-only business API request.
 
@@ -30,7 +30,7 @@ Enterprise GenAI Platform содержит разные типы операци�
 - background integrations;
 - retry failed operations.
 
-Использование только synchronous communication
+Использование только синхронной связи
 для всех сценариев может привести к:
 
 - длинным HTTP connections;
@@ -38,47 +38,45 @@ Enterprise GenAI Platform содержит разные типы операци�
 - плохой изоляции отказов;
 - сильной связанности компонентов.
 
-Использование только asynchronous communication
+Использование только асинхронной связи
 для всех сценариев усложнит простые request/response workflows.
 
-## Decision (Решение)
+## Решение
 
-Использовать synchronous communication
-для интерактивных операций,
+Использовать синхронную связь для интерактивных операций,
 где вызывающий компонент непосредственно ожидает результат.
 
-Основной synchronous transport:
+Основной синхронный transport:
 
 - HTTP/HTTPS;
 - JSON API.
 
 Для streaming AI-response
 в дальнейшем может использоваться SSE
-или другой подходящий streaming transport.
+или другой подходящий потоковый transport.
 
-Использовать asynchronous communication
-для:
+Использовать асинхронную связь для:
 
-- long-running operations;
+- длительных операций;
 - background jobs;
-- retryable processing;
-- document ingestion;
+- повторной обработки;
+- приема документов;
 - audit/event delivery;
 - операций, результат которых не требуется
-  в рамках текущего HTTP request.
+  в рамках обычного HTTP request.
 
 Конкретный механизм background messaging
 определяется ADR-005.
 
-Synchronous и asynchronous взаимодействие
+Синхронное и асинхронное взаимодействие
 не должны использоваться произвольно.
 
 Выбор должен зависеть
-от характера операции и требований к failure handling (обработка сбоев).
+от характера операции и требований к обработке отказов.
 
-## Alternatives Considered (Рассмотренные альтернативы)
+## Рассмотренные альтернативы
 
-### Alternative A — Everything Synchronous (Всё синхронно)
+### Альтернатива A - Всё синхронно
 
 Все взаимодействия выполняются
 через HTTP request/response.
@@ -92,20 +90,20 @@ Synchronous и asynchronous взаимодействие
 
 Минусы:
 
-- long-running operations (длительные операции) блокируют request;
+- длительные операции блокируют запрос;
 - повышается вероятность timeout;
 - сложнее выполнять retry;
-- временный отказ downstream component (компонент последующего этапа)
+- временный отказ нижестоящего компонента
   напрямую влияет на вызывающий сервис;
-- плохо подходит для document ingestion (загрузка документов) и background processing (фоновая обработка).
+- плохо подходит для загрузки документов и фоновой обработки.
 
-### Alternative B — Everything Asynchronous
+### Альтернатива B - Всё асинхронно
 
-Все взаимодействия выполняются через message broker.
+Все взаимодействие осуществляется через брокера сообщений.
 
 Плюсы:
 
-- хорошая decoupling;
+- хорошая развязка;
 - естественный retry;
 - удобная обработка фоновых workloads;
 - сервисы меньше зависят от времени ответа друг друга.
@@ -116,60 +114,60 @@ Synchronous и asynchronous взаимодействие
 - сложнее request/response пользовательские сценарии;
 - eventual consistency появляется даже там, где она не нужна;
 - усложняется debugging;
-- сложнее error propagation (распространение ошибок) пользователю;
+- сложнее распространять ошибоки пользователю;
 - требуется корреляция сообщений.
 
-### Alternative C — Hybrid Communication Model
+### Альтернатива C - Гибридная модель коммуникации
 
-Использовать synchronous и asynchronous communication
+Используйте синхронную и асинхронную связь
 в зависимости от сценария.
 
 Плюсы:
 
 - интерактивные операции остаются простыми;
-- long-running задачи не блокируют HTTP;
+- долго работающие задачи не блокируют HTTP;
 - можно независимо масштабировать workers;
-- failure model (модель отказа) выбирается в соответствии с задачей.
+- модель отказа выбирается в соответствии с задачей.
 
 Минусы:
 
 - необходимо поддерживать две модели коммуникации;
 - сложнее tracing;
 - разработчики должны понимать, когда использовать каждую модель;
-- asynchronous workflows требуют idempotency и управления состояниями задач.
+- асинхронные рабочие процессы требуют idempotency и управления состояниями задач.
 
-## Consequences (Последствия)
+## Последствия
 
-### Positive
+### Положительный
 
 - пользовательские сценарии остаются понятными;
-- background processing отделён от HTTP lifecycle;
-- document ingestion не блокирует Core API;
-- временные ошибки background jobs можно обрабатывать retry;
+- фоновая обработка отделена от жизненного цикла HTTP;
+- прием документов не блокирует Core API;
+- временные ошибки background jobs можно обрабатывать повторно;
 - можно независимо масштабировать workers;
 - система лучше изолирует часть отказов.
 
-### Negative
+### Отрицательный
 
-- появляется distributed communication (распределенная коммуникация);
+- появление распределенной связи;
 - необходимо внедрить correlation ID;
-- asynchronous operations требуют статусов PENDING / PROCESSING / COMPLETED / FAILED;
+- асинхронные операции требуют статусов PENDING / PROCESSING / COMPLETED / FAILED;
 - требуется idempotency;
-- сложнее end-to-end tracing (сквозная трассировка);
-- возможна eventual consistency (согласованность в конечном счете) между компонентами.
+- сложнее сквозной tracing;
+- возможная итоговая согласованность между компонентами.
 
-## Related Requirements (Связанные требования)
+## Связанные требования
 
-- Performance;
-- Availability;
-- Scalability;
-- Recoverability;
+- Производительность;
+- Доступность;
+- Масштабируемость;
+- Восстанавливаемость;
 - AI response P95;
-- long-running document processing;
+- Длительная обработка документов;
 - отсутствие потери background jobs.
 
-## Related ADR (Связанный ADR)
+## Связанный ADR
 
-- ADR-003 — Application Architecture;
-- ADR-005 — Background Job Mechanism;
-- ADR-006 — LLM Routing and Data Classification.
+- ADR-003 - Архитектура приложения;
+- ADR-005 - Background Job Mechanism;
+- ADR-006 - LLM Routing and Data Classification.

@@ -1,4 +1,4 @@
-# ADR-001 — Use .NET 10 and Python for backend workloads
+# ADR-001 - Использование .NET 10 and Python для серверной части
 
 Status: Accepted
 
@@ -11,11 +11,11 @@ enterprise backend-компоненты, так и AI/ML-компоненты.
 
 Core backend должен реализовывать:
 
-- authentication / authorization;
+- аутентификация/авторизация;
 - business logic;
-- corporate integrations;
-- platform API;
-- audit;
+- корпоративные интеграции;
+- API платформы;
+- аудит;
 - orchestration прикладных операций.
 
 AI-компоненты должны реализовывать:
@@ -30,10 +30,10 @@ AI-компоненты должны реализовывать:
 Необходимо выбрать технологический стек,
 позволяющий эффективно реализовать обе группы задач.
 
-## Decision
+## Решение
 
 Использовать .NET 10 / ASP.NET Core
-для Core API и инфраструктурных backend-компонентов.
+для Core API и инфраструктурных backend компонентов.
 
 Использовать Python / FastAPI
 для AI-specific workloads.
@@ -45,9 +45,9 @@ AI-компоненты должны реализовывать:
 Python применяется там,
 где AI/ML ecosystem даёт техническое преимущество.
 
-## Alternatives Considered
+## Рассмотренные альтернативы
 
-### Alternative A — Только .NET
+### Альтернатива A - Только .NET
 
 Плюсы:
 
@@ -61,50 +61,59 @@ Python применяется там,
 - сложнее использовать некоторые Python-first библиотеки,
   модели и исследовательские инструменты.
 
-### Alternative B — Только Python
+### Альтернатива B - Только Python
 
 Плюсы:
 
 - единый backend stack;
-- удобная AI/ML ecosystem.
+- развитая AI/ML ecosystem;
+- отсутствие межъязыковых API-контрактов между backend-компонентами.
 
 Минусы:
 
-- отказ от сильной .NET enterprise-базы;
-- business/security/integration слой пришлось бы переносить
-  в менее привычный для команды стек.
+- Python пришлось бы использовать не только для AI/ML workloads,
+  но и для основного enterprise backend;
+- сложнее сохранить чёткое разделение между business/application
+  слоем и AI specific workloads;
+- весь Core API, включая authorization, audit,
+  корпоративные интеграции и инфраструктурную логику,
+  пришлось бы строить в том же runtime и deployment ecosystem,
+  что и AI компоненты;
+- независимое развитие и масштабирование enterprise
+  и AI workloads становилось бы менее выраженным на уровне
+  технологических границ.
 
-### Alternative C — .NET + Python
+### Альтернатива C - .NET + Python
 
 Использовать каждый стек в той области,
 где он имеет наибольшие преимущества.
 
-## Consequences
+## Последствия
 
-### Positive
+### Положительный
 
 - используем сильные стороны обеих экосистем;
 - AI experimentation проще;
 - business/security слой остаётся в .NET;
 - Python AI services можно масштабировать независимо.
 
-### Negative
+### Отрицательный
 
 - два языка;
-- два dependency ecosystem;
+- две экосистемы зависимостей;
 - два runtime;
 - сложнее CI/CD;
-- сложнее tracing/debugging между сервисами;
-- необходимо поддерживать API contracts между .NET и Python.
+- сложнее отслеживание/отладка между сервисами;
+- необходимо поддерживать API контракты между .NET и Python.
 
-## Related Requirements (Связанные требования)
+## Связанные требования
 
-- Security;
-- Scalability (Масштабируемость);
-- Maintainability (Удобообслуживаемость);
+- безопасность;
+- масштабируемость;
+- ремонтопригодность;
 - возможность независимого масштабирования AI workloads.
 
-## Related ADR (Связанный ADR)
+## Связанный ADR
 
-- ADR-003 — Application Architecture (Архитектура приложения);
-- ADR-004 — Sync and Async Communication (Синхронная и асинхронная коммуникация).
+- ADR-003 - Application Architecture (Архитектура приложения);
+- ADR-004 - Sync and Async Communication (Синхронная и асинхронная коммуникация).
