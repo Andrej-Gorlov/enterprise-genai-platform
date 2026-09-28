@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/core-api/">
+    <Project Path="src/core-api/EnterpriseGenAI.Core.Api.csproj" />
+  </Folder>
+</Solution>
