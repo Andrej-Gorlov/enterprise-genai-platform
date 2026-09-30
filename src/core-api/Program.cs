@@ -1,6 +1,7 @@
 using EnterpriseGenAI.Core.Api.Options;
 using EnterpriseGenAI.Core.Api.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using EnterpriseGenAI.Core.Api.Modules.Chats.Api;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +22,6 @@ builder.Services
 var app = builder.Build();
 
 app.MapHealthChecks("/health");
-
+app.MapChatEndpoints();
 
 app.Run();
