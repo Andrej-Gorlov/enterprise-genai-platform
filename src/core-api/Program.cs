@@ -22,10 +22,23 @@ builder.Services
 builder.Services.AddValidation();
 builder.Services.AddProblemDetails();
 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Web", policy =>
+    {
+        policy
+            .WithOrigins("http://localhost:5173")
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
+
 var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+
+app.UseCors("Web");
 
 app.MapHealthChecks("/health");
 app.MapChatEndpoints();
