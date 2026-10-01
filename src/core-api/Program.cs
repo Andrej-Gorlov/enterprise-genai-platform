@@ -48,3 +48,5 @@ app.MapHealthChecks("/health");
 app.MapChatEndpoints();
 
 app.Run();
+
+public partial class Program;

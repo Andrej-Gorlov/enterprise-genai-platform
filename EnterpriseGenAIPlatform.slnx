@@ -3,4 +3,8 @@
   <Folder Name="/src/core-api/">
     <Project Path="src/core-api/EnterpriseGenAI.Core.Api.csproj" />
   </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/core-api-tests/">
+    <Project Path="tests/core-api-tests/EnterpriseGenAI.Core.Api.Tests.csproj" />
+  </Folder>
 </Solution>
