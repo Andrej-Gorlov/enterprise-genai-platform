@@ -20,5 +20,74 @@ services:
       timeout: 5s
       retries: 10
 
+  db-migrator:
+    image: enterprise-genai-core-api:dev
+
+    command: ["--migrate"]
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+
+      ConnectionStrings__Database: "Host=postgres;Port=5432;Database=enterprise_genai;Username=enterprise_genai;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    restart: "no"
+
+  ai-orchestrator:
+    image: enterprise-genai-ai-orchestrator:dev
+
+    build:
+      context: ./src/ai-orchestrator
+      dockerfile: Dockerfile
+
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    volumes:
+      - huggingface_cache:/home/app/.cache/huggingface
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10m
+
+  core-api:
+    image: enterprise-genai-core-api:dev
+
+    build:
+      context: .
+      dockerfile: src/core-api/Dockerfile
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+
+      ConnectionStrings__Database: "Host=postgres;Port=5432;Database=enterprise_genai;Username=enterprise_genai;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+
+      AiOrchestrator__BaseUrl: "http://ai-orchestrator:8000"
+      AiOrchestrator__TimeoutSeconds: "30"
+
+    ports:
+      - "127.0.0.1:5091:8080"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      db-migrator:
+        condition: service_completed_successfully
+
+      ai-orchestrator:
+        condition: service_healthy
+
 volumes:
   postgres_data:
+  huggingface_cache:

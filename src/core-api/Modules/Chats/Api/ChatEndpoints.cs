@@ -23,10 +23,7 @@ public static class ChatEndpoints
         {
             var chats = await dbContext.Chats.AsNoTracking()
                 .OrderBy(chat => chat.CreatedAt)
-                .Select(chat => new ChatResponse(
-                    chat.Id,
-                    chat.Title,
-                    chat.CreatedAt))
+                .Select(chat => new ChatResponse(chat.Id, chat.Title, chat.CreatedAt))
                 .ToListAsync();
 
             return Results.Ok(chats);

@@ -21,7 +21,9 @@ public sealed class CoreApiFactory : WebApplicationFactory<Program>
             configuration.AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
-                    ["ConnectionStrings:Database"] = "Host=unused"
+                    ["ConnectionStrings:Database"] = "Host=unused",
+                    ["AiOrchestrator:BaseUrl"] = "http://ai-orchestrator.test",
+                    ["AiOrchestrator:TimeoutSeconds"] = "30"
                 });
         });
         return base.CreateHost(builder);

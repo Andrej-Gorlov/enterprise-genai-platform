@@ -1,391 +1,221 @@
-# 🚀 Enterprise GenAI Platform
+# Enterprise GenAI Platform
 
-Enterprise GenAI Platform архитектурный проект корпоративной GenAI-платформы, который показывает поэтапную реализацию системы от архитектурного baseline до работающих продуктовых вертикалей.
+**Enterprise GenAI Platform** проект корпоративной платформы генеративного ИИ с модульным серверным приложением, отдельным сервисом обработки задач ИИ и воспроизводимым локальным окружением.
 
-Фокус проекта на построении управляемой enterprise платформы: с понятными границами ответственности, контролем доступа, наблюдаемостью, воспроизводимой инфраструктурой и возможностью безопасно наращивать RAG/LLM функциональность поверх стабильного Core API.
+В репозитории работают веб интерфейс для создания и просмотра чатов, API с хранением данных в PostgreSQL и сервис семантического сравнения текстов на основе локальной модели векторных представлений. Архитектура предусматривает дальнейшее подключение документов, поиска по ним и генерации ответов с учётом прав доступа.
 
-## 🧭 Архитектурная идея
+## Возможности
 
-Платформа строится от базовых enterprise компонентов к AI возможностям:
+- **Чаты:** создание и получение чатов через REST API, хранение в PostgreSQL, обновление списка в интерфейсе без перезагрузки страницы.
+- **Обработка текстов:** отдельный сервис Python/FastAPI с проверкой текста и вычислением семантической близости двух фрагментов.
+- **Локальные векторные представления:** модель `sentence-transformers/all-MiniLM-L6-v2` работает на CPU; близость вычисляется по косинусному сходству векторов.
+- **Межсервисное взаимодействие:** типизированный HTTP клиент .NET с настройкой времени ожидания, передачей отмены и обработкой ошибок зависимого сервиса.
+- **Диагностика:** единый `X-Correlation-ID` в запросах, ответах и журналах .NET и Python; безопасные ответы об ошибках в формате `ProblemDetails`.
+- **Локальное развёртывание:** Docker Compose, проверка готовности сервисов, автоматическое применение миграций базы данных и постоянное хранение кеша модели.
 
-```text
-Web UI
-  |
-  v
-Core API
-  |
-  v
-Application Modules
-  |
-  v
-PostgreSQL / pgvector
-  |
-  v
-AI Orchestrator / LLM Gateway / Ingestion
-```
-
-Ключевой принцип `не усложнять систему раньше времени.`
-
-На текущем этапе Core API развивается как **Modular Monolith**, а AI специфичные workloads выделяются отдельно только там, где это действительно оправдано.
-
-## ✅ Текущий статус
-
-### Stage 0 Architecture
-
-Завершён.
-
-Зафиксированы:
-
-- C4 Context и Container diagrams;
-- NFR;
-- Data Flows;
-- Security Boundaries;
-- ADR;
-- Architecture Baseline;
-- MVP Scope;
-- границы между .NET Core API и Python AI workloads;
-- PostgreSQL + pgvector;
-- RabbitMQ;
-- Object Storage;
-- LLM Gateway;
-- OIDC / OAuth2;
-- audit и authorization boundaries.
-
-### Stage 1 Full Stack MVP
-
-Завершён базовый Full Stack контур:
+## Архитектура
 
 ```text
+Браузер
+   │
+   V
 React + TypeScript
-        |
-        v
-TanStack Query
-        |
-        v
-ASP.NET Core .NET 10
-        |
-        v
-EF Core / Npgsql
-        |
-        v
-PostgreSQL + pgvector
+   │
+   V
+Core API (.NET 10, модульный монолит)
+   ├── Модуль чатов ── EF Core / Npgsql ── PostgreSQL + pgvector
+   │
+   └── Модуль AI ── HTTP ── AI Orchestrator (Python / FastAPI)
+                                 │
+                                 V
+                       SentenceTransformer (CPU)
+                                 │
+                                 V
+                        Косинусное сходство
 ```
 
-Результат Stage 1 полноценная рабочая вертикаль:
+**Core API** отвечает за прикладную логику, HTTP контракты, проверку входных данных и доступ к постоянному хранилищу. Он развивается как **модульный монолит**: выделение каждого модуля в отдельный микросервис не требуется.
 
-```text
-React -> .NET -> PostgreSQL
+**AI Orchestrator** изолирует вычисления ИИ от основной серверной логики. Модель загружается при запуске сервиса, а запросы к ней выполняются через отдельный слой сервиса векторных представлений. Генеративная языковая модель для семантического сравнения не используется.
+
+**PostgreSQL** хранит данные приложения. Расширение `pgvector` включено в инфраструктуру, но полноценный поиск по корпоративным документам пока не реализован.
+
+### Состав локального окружения
+
+Docker Compose управляет четырьмя сервисами на основе трёх разных образов:
+
+| Сервис | Назначение |
+| --- | --- |
+| `postgres` | PostgreSQL с расширением `pgvector` и постоянным томом `postgres_data` |
+| `db-migrator` | Одноразовое применение недостающих миграций EF Core |
+| `ai-orchestrator` | FastAPI, локальная модель и постоянный том `huggingface_cache` |
+| `core-api` | ASP.NET Core API, доступный на `localhost:5091` |
+
+`db-migrator` использует тот же образ, что и `core-api`, но запускается с аргументом `--migrate`. EF Core проверяет таблицу `__EFMigrationsHistory` и применяет только отсутствующие миграции. При ошибке мигратора запуск Core API блокируется.
+
+Core API ожидает успешного завершения мигратора и готовности AI Orchestrator. PostgreSQL также проходит проверку готовности. Веб интерфейс запускается отдельно через Vite.
+
+## Технологии
+
+| Область | Технологии |
+| --- | --- |
+| Веб-интерфейс | React, TypeScript, Vite, TanStack Query |
+| Основной сервер | .NET 10, ASP.NET Core, EF Core, Npgsql |
+| Сервис ИИ | Python 3.13, FastAPI, Pydantic, SentenceTransformers, PyTorch (CPU) |
+| Хранилище | PostgreSQL, pgvector |
+| Развёртывание | Docker, Docker Compose |
+| Тестирование | xUnit, WebApplicationFactory, pytest, mypy, Vitest, Testing Library |
+
+## Локальный запуск
+
+Нужны Docker с поддержкой Compose, Git и доступ к сети для первоначальной загрузки образов и модели. Для веб-интерфейса дополнительно потребуется Node.js с npm.
+
+В каталоге проекта задайте `POSTGRES_PASSWORD`. Например, в PowerShell:
+
+```powershell
+$env:POSTGRES_PASSWORD = Read-Host "Пароль PostgreSQL"
+docker compose up -d --build
 ```
 
-Она создаёт техническую основу для дальнейшей реализации:
+Пароль также можно передать через локальный файл `.env` в корне проекта. **Не добавляйте этот файл и другие секреты в Git.**
 
-- пользователей;
-- проектов;
-- документов;
-- чатов;
-- истории запросов.
+При запуске Compose:
 
-Первым реализованным вертикальным срезом стал модуль `Chats`.
+- PostgreSQL проходит проверку готовности;
+- мигратор применяет недостающие изменения схемы БД и завершается;
+- Python загружает модель и становится доступен для запросов;
+- Core API запускается после успешного завершения необходимых проверок.
 
-## 🏗️ Что уже реализовано
+Первый запуск может занять больше времени из за скачивания модели Hugging Face. Её файлы сохраняются в `huggingface_cache` и используются при последующем пересоздании контейнера.
+
+Проверить окружение:
+
+```powershell
+docker compose ps -a
+Invoke-RestMethod http://localhost:8000/health
+Invoke-WebRequest http://localhost:5091/health -UseBasicParsing
+```
+
+Основные адреса на компьютере разработчика:
+
+| Компонент | Адрес |
+| --- | --- |
+| Core API | `http://localhost:5091` |
+| AI Orchestrator | `http://localhost:8000` |
+| PostgreSQL | `localhost:5433` |
+
+Для запуска веб интерфейса в отдельном терминале:
+
+```powershell
+cd src/web
+npm install
+npm run dev
+```
+
+Vite обычно открывает приложение на `http://localhost:5173`. При изменении адреса Core API соответствующую настройку фронтенда также необходимо обновить.
+
+Остановить окружение без удаления данных:
+
+```powershell
+docker compose down
+```
+
+Не используйте `docker compose down -v`, если необходимо сохранить данные PostgreSQL и кеш модели: этот параметр удаляет именованные тома.
+
+## HTTP API
 
 ### Core API
 
-- ASP.NET Core на .NET 10;
-- Dependency Injection;
-- middleware pipeline;
-- configuration и Options pattern;
-- EF Core;
-- Npgsql;
-- migrations;
-- PostgreSQL;
-- pgvector;
-- REST API conventions;
-- validation;
-- ProblemDetails;
-- error handling;
-- CORS;
-- Correlation ID;
-- structured request logging;
-- database-aware health checks.
+| Метод | Путь | Назначение |
+| --- | --- | --- |
+| `GET` | `/health` | Проверка состояния сервера и подключения к БД |
+| `POST` | `/chats` | Создание чата |
+| `GET` | `/chats` | Получение списка чатов |
+| `GET` | `/chats/{id}` | Получение чата по идентификатору |
+| `POST` | `/ai/semantic-similarity` | Сравнение двух текстов через AI Orchestrator |
 
-### Frontend
+Пример сравнения текстов через Core API:
 
-- React;
-- TypeScript;
-- Vite;
-- API client boundary;
-- TanStack Query;
-- query-based loading;
-- mutation-based create flow;
-- cache invalidation;
-- automatic refetch.
+```powershell
+$body = @{
+    left  = "The application stores data in PostgreSQL."
+    right = "The system persists information in a PostgreSQL database."
+} | ConvertTo-Json
 
-### Реализованный вертикальный срез
-
-`Chats`:
-
-```text
-POST /chats
-GET  /chats
-GET  /chats/{id}
+Invoke-RestMethod `
+    -Uri "http://localhost:5091/ai/semantic-similarity" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body
 ```
 
-Полная цепочка:
+Пример ответа:
 
-```text
-React UI
-   |
-   v
-TanStack Query
-   |
-   v
- HTTP
-   |
-   v
-ASP.NET Core
-   |
-   v
-Chats Module
-   |
-   v
-EF Core
-   |
-   v
-PostgreSQL
+```json
+{
+  "score": 0.75979
+}
 ```
 
-После создания нового Chat TanStack Query инвалидирует кэш и повторно загружает данные из API.
+`score` косинусное сходство векторных представлений текстов. Это показатель семантической близости, а не вероятность истинности или корректности утверждений.
 
-## 🧩 Backend Architecture
+При сбоях интеграции Core API возвращает стандартизированные ошибки: `502` при некорректном ответе зависимого сервиса, `503` при недоступности Python и `504` при превышении времени ожидания.
 
-Core API развивается как **Modular Monolith**.
+### AI Orchestrator
 
-Целевые модули:
+У Python сервиса собственные маршруты: `GET /health`, `POST /validate-text` и `POST /semantic-similarity`. В обычном сценарии браузер и внешние потребители обращаются к публичному маршруту Core API, а не непосредственно к внутреннему сервису ИИ.
 
-```text
-Core API
-├── Identity
-├── Chats
-├── Documents
-├── Authorization
-├── Audit
-└── Integrations
-```
+## Проверка проекта
 
-Подход позволяет сохранять чёткие domain boundaries без преждевременного перехода к распределённой микросервисной архитектуре.
-
-## 🤖 AI Architecture
-
-AI функциональность не встраивается напрямую в Core API.
-
-Для неё предусмотрены отдельные компоненты:
-
-```text
-AI Orchestrator
-LLM Gateway
-Ingestion Worker
-```
-
-Назначение:
-
-- RAG orchestration;
-- embeddings;
-- document ingestion;
-- LLM routing;
-- controlled tool execution;
-- data classification;
-- policy enforcement перед отправкой данных во внешнюю LLM.
-
-Python используется для AI workloads, .NET для Core API и основной бизнес логики.
-
-## 🗄️ Data Layer
-
-Основное хранилище:
-
-```text
-PostgreSQL + pgvector
-```
-
-Базовый подход:
-
-```text
-EF Core  основной доступ к данным
-Dapper   точечно, где это оправдано
-```
-
-PostgreSQL остаётся source of truth для persistent application state.
-
-RabbitMQ используется для фоновых задач, но не является источником истины.
-
-## 🔐 Security Boundaries
-
-Ключевые правила:
-
-- authorization выполняется до передачи защищённых данных в LLM;
-- LLM не является security authority;
-- доступ к внешним LLM проходит через LLM Gateway;
-- document access контролируется на уровне платформы;
-- audit trail является частью базовой архитектуры;
-- Identity строится вокруг OIDC / OAuth2;
-- роли MVP: `USER`, `ADMIN`, `SECURITY_ADMIN`.
-
-## 🔭 Observability и HTTP Infrastructure
-
-В Core API реализована базовая cross-cutting инфраструктура:
-
-```text
-HTTP Request
-    |
-    v
-CorrelationIdMiddleware
-    |
-    v
-RequestLoggingMiddleware
-    |
-    v
-ExceptionHandler
-    |
-    v
-ProblemDetails
-    |
-    v
-  CORS
-    |
-    v
-Endpoint
-```
-
-Health check учитывает состояние PostgreSQL:
-
-```text
-Core API + PostgreSQL доступны -> 200 Healthy
-PostgreSQL недоступен          -> 503 Unhealthy
-```
-
-## 🧪 Verification
-
-Backend:
-
-- xUnit;
-- WebApplicationFactory;
-- HTTP integration tests;
-- validation / 404 / Correlation ID coverage.
-
-Frontend:
-
-- Vitest;
-- Testing Library;
-- query loading test;
-- mutation + refetch test.
-
-Единая verification команда:
+Из корня репозитория:
 
 ```powershell
 .\scripts\verify.ps1
+docker compose config --quiet
 ```
 
-На текущем этапе:
+Скрипт `verify.ps1` собирает и проверяет .NET решение, запускает тесты сервера, проверку кода фронтенда, его тесты и сборку.
 
-```text
-Backend tests:  6
-Frontend tests: 2
+Тесты и статическая проверка Python запускаются отдельно из каталога `src/ai-orchestrator` в активированном виртуальном окружении:
+
+```powershell
+python -m pytest -v
+python -m mypy src tests
 ```
 
-## 🚫 Что сознательно не добавлено на этом этапе
+Тесты изолируют внешние зависимости: для проверки HTTP контрактов используются подмены сервисов и обработчиков запросов, поэтому запуск настоящей модели не нужен. Работу модели и взаимодействие контейнеров можно проверить через запущенный Docker Compose.
 
-Пока не используются:
+## Границы проекта
 
-- Kubernetes;
-- service mesh;
-- полноценный микросервисный ландшафт;
-- agent framework;
-- distributed orchestration;
-- multi-provider LLM routing;
-- Local LLM GPU cluster.
+В репозитории уже доступны чаты, семантическое сравнение, взаимодействие .NET и Python, обработка отказов и локальное развёртывание. **Полноценная система ответов по корпоративным документам ещё не реализована.**
 
-Это осознанное архитектурное решение: сначала стабильная Full Stack и platform foundation, затем дополнительная распределённость и AI-сложность только при наличии реальной необходимости.
+В целевую архитектуру входят загрузка и обработка документов, поиск с дополнением контекста (RAG), разграничение прав доступа, аудит, шлюз к внешним языковым моделям, RabbitMQ и объектное хранилище. Эти компоненты описаны в архитектурных документах и не должны восприниматься как действующие сервисы текущей сборки.
 
-## ⚙️ Технологический стек
+Вызовы генеративных языковых моделей предполагается направлять через отдельный шлюз. Локальные вычисления векторных представлений в Python не заменяют такой шлюз.
 
-### Backend
-
-- .NET 10
-- ASP.NET Core
-- EF Core
-- Npgsql
-- PostgreSQL
-- pgvector
-
-### Frontend
-
-- React
-- TypeScript
-- Vite
-- TanStack Query
-
-### AI
-
-- Python
-- FastAPI
-
-### Infrastructure
-
-- Docker Compose
-- RabbitMQ
-- Object Storage
-- OIDC / Keycloak
-- External LLM Provider
-
-### Testing
-
-- xUnit
-- WebApplicationFactory
-- Vitest
-- Testing Library
-
-## 📁 Репозиторий
+## Структура репозитория
 
 ```text
 enterprise-genai-platform/
-├── docs/
-├── scripts/
+├── docs/                  # Архитектура, требования и принятые решения
+├── scripts/               # Проверки проекта
 ├── src/
-│   ├── core-api/
-│   └── web/
-├── tests/
-├── compose.yaml
+│   ├── ai-orchestrator/   # Python, FastAPI и обработка текстов
+│   ├── core-api/          # ASP.NET Core, модули и EF Core
+│   └── web/               # React и TypeScript
+├── tests/                 # Тесты .NET
+├── compose.yaml           # Локальная инфраструктура и сервисы
 ├── EnterpriseGenAIPlatform.slnx
 ├── global.json
 └── README.md
 ```
 
-## 📚 Документация
+## Документация
 
-Архитектурные материалы и ADR находятся в `docs/`.
+- [Архитектурные принципы и ограничения](docs/architecture/architecture-baseline.md)
+- [Контейнерная архитектура C4](docs/architecture/c4-container.md)
+- [Потоки данных и границы безопасности](docs/architecture/data-flows-and-security-boundaries.md)
+- [Область охвата MVP](docs/requirements/mvp-scope.md)
+- [Архитектурные решения (ADR)](docs/adr/README.md)
 
-Подробное описание результата Stage 1:
-
-```text
-docs/stage-1-full-stack-mvp.md
-```
-
-Инструкции по локальному запуску и воспроизведению окружения вынесены в документацию Stage 1, чтобы README оставался архитектурным обзором проекта, а не пошаговой инструкцией.
-
-## 🎯 Текущая архитектурная точка
-
-Сейчас сформирована рабочая база, на которой можно последовательно реализовывать продуктовые модули и AI функциональность без пересмотра фундаментальных решений Stage 0.
-
-Текущая платформа уже содержит:
-
-```text
-React
-  |
-  v
-ASP.NET Core
-  |
-  v
-PostgreSQL
-```
-
-с тестируемой Full Stack вертикалью, модульным Core API, инфраструктурным HTTP pipeline и подготовленным контуром для дальнейшего подключения Documents, RAG, LLM Gateway и остальных enterprise функций.
+Проект развивает корпоративную GenAI платформу с сохранением чётких границ между прикладной логикой, хранением данных и вычислениями искусственного интеллекта.
