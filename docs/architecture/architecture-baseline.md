@@ -81,19 +81,27 @@ Core business backend реализуется как Modular Monolith
 - формирование контекста;
 - рабочие процессы AI.
 
-### Модуль загрузки документов
+### Document Ingestion Worker
 
 Технологии:
 
-- Python.
+- .NET 10 Worker Service.
 
-Ответственность: Асинхронная обработка документов:
+Ответственность:
+
+Асинхронная обработка документов:
 
 extract
 -> clean
 -> chunk
 -> embeddings
 -> indexing.
+
+AI/ML-specific операции, включая генерацию embeddings,
+делегируются Python AI Orchestrator через HTTP.
+
+Worker отвечает за управление процессом ingestion,
+но не выполняет ML inference самостоятельно.
 
 ### LLM Gateway
 
