@@ -95,6 +95,7 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddScoped<IDocumentStorage, MinioDocumentStorage>();
+builder.Services.AddScoped<IDocumentService, DocumentService>();
 
 var app = builder.Build();
 
