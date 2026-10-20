@@ -5,24 +5,32 @@ using EnterpriseGenAI.Core.Api.Modules.Documents.Contracts;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Domain;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace EnterpriseGenAI.Core.Api.Tests.Modules.Documents;
 
 public sealed class DocumentServiceTests
 {
+    
     private sealed class FakeDocumentStorage : IDocumentStorage
     {
         public bool ShouldFail { get; set; }
+        public bool ShouldFailStore { get; set; }
+
+        private int _storeOriginalCallCount;
+        public int StoreOriginalCallCount => Volatile.Read(ref _storeOriginalCallCount);
+
+        public TaskCompletionSource? BothCallsStarted { get; set; }
+        public TaskCompletionSource? ReleaseStoreCalls { get; set; }
 
         public string LastKey { get; private set; } = string.Empty;
-
         public DateTime? LastExpiry { get; private set; }
 
         public string CreatePresignedUploadUrl(string temporaryObjectKey, DateTime expiresAtUtc)
         {
             if (ShouldFail)
             {
-                throw new InvalidOperationException("Имитация сбоя системы хранения данных.");
+                throw new InvalidOperationException("Имитация сбоя генерации presigned URL.");
             }
 
             LastKey = temporaryObjectKey;
@@ -34,6 +42,57 @@ public sealed class DocumentServiceTests
         public Task<long?> GetTemporaryObjectSizeAsync(string temporaryObjectKey, CancellationToken cancellationToken)
         {
             return Task.FromResult<long?>(1024L);
+        }
+
+        public async Task<StoredOriginalResult> StoreOriginalAsync(
+            string temporaryObjectKey,
+            Guid documentId,
+            int contentVersion,
+            long expectedSize,
+            string expectedContentType,
+            CancellationToken cancellationToken)
+        {
+            var callCount = Interlocked.Increment(ref _storeOriginalCallCount);
+
+            if (callCount == 2)
+            {
+                BothCallsStarted?.TrySetResult();
+            }
+
+            if (ReleaseStoreCalls is not null)
+            {
+                await ReleaseStoreCalls.Task.WaitAsync(cancellationToken);
+            }
+
+            if (ShouldFailStore)
+            {
+                throw new InvalidOperationException("Имитация сбоя сохранения оригинала в MinIO.");
+            }
+
+            var permanentKey = $"documents/{documentId:N}/v{contentVersion}/original";
+            var checksum = new string('a', 64);
+            
+            return new StoredOriginalResult(permanentKey, expectedSize, checksum);
+        }
+    }
+
+    private sealed class FailOnceSaveInterceptor : SaveChangesInterceptor
+    {
+        public bool FailNextSave { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (FailNextSave)
+            {
+                FailNextSave = false;
+
+                throw new InvalidOperationException("Имитация сбоя при сохранении в базу данных.");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
         }
     }
 
@@ -191,5 +250,247 @@ public sealed class DocumentServiceTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.RegisterUploadAsync(request, "user-123", CancellationToken.None));
 
         Assert.Equal(0, await dbContext.Documents.CountAsync());
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_ValidDocument_ChangesStatusToUploaded()
+    {
+        var (service, dbContext, storage) = CreateService();
+        await using var context = dbContext;
+
+        const string ownerId = "user-123";
+        var regResponse = await service.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512), ownerId, CancellationToken.None);
+
+        var confirmResponse = await service.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None);
+
+        Assert.Equal(DocumentStatus.Uploaded, confirmResponse.Status);
+        Assert.Equal(1, storage.StoreOriginalCallCount);
+
+        var dbDoc = await dbContext.Documents.AsNoTracking().SingleAsync(d => d.DocumentId == regResponse.DocumentId);
+        Assert.Equal(DocumentStatus.Uploaded, dbDoc.Status);
+        Assert.NotNull(dbDoc.ObjectKey);
+        Assert.NotNull(dbDoc.Checksum);
+        Assert.Equal(64, dbDoc.Checksum.Length);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_AlreadyUploaded_ReturnsExistingDocument()
+    {
+        var (service, dbContext, storage) = CreateService();
+        await using var context = dbContext;
+
+        const string ownerId = "user-123";
+        var regResponse = await service.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512), ownerId, CancellationToken.None);
+
+        var firstConfirm = await service.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None);
+        var secondConfirm = await service.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None);
+
+        Assert.Equal(DocumentStatus.Uploaded, secondConfirm.Status);
+        Assert.Equal(firstConfirm.Checksum, secondConfirm.Checksum);
+        Assert.Equal(1, storage.StoreOriginalCallCount); // Не увеличился при повторном вызове
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_WrongOwner_ThrowsKeyNotFoundException()
+    {
+        var (service, dbContext, storage) = CreateService();
+        await using var context = dbContext;
+
+        const string ownerId = "user-123";
+        var regResponse = await service.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512), ownerId, CancellationToken.None);
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => service.ConfirmUploadAsync(regResponse.DocumentId, "intruder-999", CancellationToken.None));
+
+        var dbDoc = await dbContext.Documents.AsNoTracking().SingleAsync(d => d.DocumentId == regResponse.DocumentId);
+        Assert.Equal(DocumentStatus.PendingUpload, dbDoc.Status); // Состояние не изменилось
+        Assert.Equal(0, storage.StoreOriginalCallCount);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_InvalidStatus_ThrowsInvalidOperationException()
+    {
+        var (service, dbContext, storage) = CreateService();
+        await using var context = dbContext;
+
+        const string ownerId = "user-123";
+        var regResponse = await service.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512), ownerId, CancellationToken.None);
+
+        // Переводим документ вручную в статус Failed для теста
+        var doc = await dbContext.Documents.SingleAsync(d => d.DocumentId == regResponse.DocumentId);
+        doc.MarkUploadFailed();
+        await dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None));
+
+        var dbDoc = await dbContext.Documents.AsNoTracking().SingleAsync(d => d.DocumentId == regResponse.DocumentId);
+        Assert.Equal(DocumentStatus.Failed, dbDoc.Status); // Состояние не изменилось
+        Assert.Equal(0, storage.StoreOriginalCallCount);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_StorageFails_KeepsPendingUpload()
+    {
+        var (service, dbContext, storage) = CreateService();
+        await using var context = dbContext;
+
+        const string ownerId = "user-123";
+        var regResponse = await service.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512), ownerId, CancellationToken.None);
+
+        storage.ShouldFailStore = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None));
+
+        var dbDoc = await dbContext.Documents.AsNoTracking().SingleAsync(d => d.DocumentId == regResponse.DocumentId);
+        Assert.Equal(DocumentStatus.PendingUpload, dbDoc.Status); // Состояние осталось PendingUpload
+        Assert.Null(dbDoc.ObjectKey);
+        Assert.Null(dbDoc.Checksum);
+        Assert.Equal(1, storage.StoreOriginalCallCount);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_DatabaseSaveFails_RetrySucceeds()
+    {
+        var interceptor = new FailOnceSaveInterceptor();
+        var dbName = Guid.NewGuid().ToString("N");
+        var dbOptions = new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(dbName).AddInterceptors(interceptor).Options;
+
+        var storage = new FakeDocumentStorage();
+        var options = Microsoft.Extensions.Options.Options.Create(new DocumentStorageOptions
+        {
+            InternalEndpoint = "http://localhost:9000",
+            PublicEndpoint = "http://localhost:9000",
+            BucketName = "test-bucket",
+            AccessKey = "test-key",
+            SecretKey = "test-secret",
+            PresignedUrlExpiryMinutes = 10
+        });
+
+        await using var dbContext1 = new AppDbContext(dbOptions);
+        var service1 = new DocumentService(dbContext1, storage, options);
+
+        const string ownerId = "user-123";
+        var regResponse = await service1.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512),  ownerId,  CancellationToken.None);
+
+        interceptor.FailNextSave = true;
+
+        await using var dbContext2 = new AppDbContext(dbOptions);
+        var service2 = new DocumentService(dbContext2, storage, options);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service2.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None));
+
+        await using var dbContext3 = new AppDbContext(dbOptions);
+        var docInDb = await dbContext3.Documents.AsNoTracking().SingleAsync(d => d.DocumentId == regResponse.DocumentId);
+        Assert.Equal(DocumentStatus.PendingUpload, docInDb.Status);
+
+        await using var dbContext4 = new AppDbContext(dbOptions);
+        var service4 = new DocumentService(dbContext4, storage, options);
+
+        var confirmResult = await service4.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None);
+
+        Assert.Equal(DocumentStatus.Uploaded, confirmResult.Status);
+
+        await using var dbContext5 = new AppDbContext(dbOptions);
+        var finalDoc = await dbContext5.Documents.AsNoTracking().SingleAsync(d => d.DocumentId == regResponse.DocumentId);
+        
+        Assert.Equal(DocumentStatus.Uploaded, finalDoc.Status);
+        Assert.NotNull(finalDoc.ObjectKey);
+        Assert.NotNull(finalDoc.Checksum);
+        Assert.Equal(64, finalDoc.Checksum.Length);
+        Assert.Equal(2, storage.StoreOriginalCallCount);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_ConcurrentRequests_DetectsConcurrencyConflict()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var dbOptions = new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(dbName).Options;
+
+        var storage = new FakeDocumentStorage
+        {
+            BothCallsStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+            ReleaseStoreCalls = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+
+        var options = Microsoft.Extensions.Options.Options.Create(new DocumentStorageOptions
+        {
+            InternalEndpoint = "http://localhost:9000",
+            PublicEndpoint = "http://localhost:9000",
+            BucketName = "test-bucket",
+            AccessKey = "test-key",
+            SecretKey = "test-secret",
+            PresignedUrlExpiryMinutes = 10
+        });
+
+        await using var setupContext = new AppDbContext(dbOptions);
+        var setupService = new DocumentService(setupContext, storage, options);
+
+        const string ownerId = "user-123";
+        var regResponse = await setupService.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512), ownerId, CancellationToken.None);
+
+        await using var dbContext1 = new AppDbContext(dbOptions);
+        await using var dbContext2 = new AppDbContext(dbOptions);
+
+        var service1 = new DocumentService(dbContext1, storage, options);
+        var service2 = new DocumentService(dbContext2, storage, options);
+
+        try
+        {
+            var task1 = service1.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None);
+            var task2 = service2.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None);
+
+            var completedTask = await Task.WhenAny(storage.BothCallsStarted.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+            if (completedTask != storage.BothCallsStarted.Task)
+            {
+                throw new TimeoutException("Таймаут ожидания старта обоих вызовов StoreOriginalAsync.");
+            }
+
+            storage.ReleaseStoreCalls.TrySetResult();
+
+            Task<DocumentResponse>[] tasks = [task1, task2];
+            var results = await Task.WhenAll(tasks.Select(async t =>
+            {
+                try
+                {
+                    return (Success: true, Result: await t, Exception: (Exception?)null);
+                }
+                catch (Exception ex)
+                {
+                    return (Success: false, Result: (DocumentResponse?)null, Exception: ex);
+                }
+            }));
+
+            var successes = results.Where(r => r.Success).ToList();
+            var failures = results.Where(r => !r.Success).ToList();
+
+            Assert.Single(successes);
+            Assert.Single(failures);
+
+            var concurrencyEx = Assert.IsType<DbUpdateConcurrencyException>(failures[0].Exception);
+            Assert.NotNull(concurrencyEx);
+
+            await using var verifyContext = new AppDbContext(dbOptions);
+            var verifiedDoc = await verifyContext.Documents.AsNoTracking().SingleAsync(d => d.DocumentId == regResponse.DocumentId);
+
+            Assert.Equal(DocumentStatus.Uploaded, verifiedDoc.Status);
+            Assert.NotNull(verifiedDoc.ObjectKey);
+            Assert.NotNull(verifiedDoc.Checksum);
+
+            int initialCallCount = storage.StoreOriginalCallCount;
+
+            Assert.Equal(2, initialCallCount);
+
+            await using var retryContext = new AppDbContext(dbOptions);
+            var retryService = new DocumentService(retryContext, storage, options);
+
+            var retryResponse = await retryService.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None);
+
+            Assert.Equal(DocumentStatus.Uploaded, retryResponse.Status);
+            Assert.Equal(initialCallCount, storage.StoreOriginalCallCount);
+        }
+        finally
+        {
+            // Важно: гарантированно освобождаем ReleaseStoreCalls, чтобы не оставлять задачи заблокированными при падении теста
+            storage.ReleaseStoreCalls.TrySetResult();
+        }
     }
 }

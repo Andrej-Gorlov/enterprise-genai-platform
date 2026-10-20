@@ -112,9 +112,6 @@ public sealed class Document
         if (Status != DocumentStatus.PendingUpload)
             throw new InvalidOperationException("Документ не ожидает загрузки.");
 
-        if (DateTime.UtcNow > UploadExpiresAtUtc)
-            throw new InvalidOperationException("Срок загрузки документа истек.");
-
         if (string.Equals(objectKey, TemporaryObjectKey, StringComparison.Ordinal))
         {
             throw new ArgumentException("Ключ подтвержденного объекта должен отличаться от временного ключа.", nameof(objectKey));

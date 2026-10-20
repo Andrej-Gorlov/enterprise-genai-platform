@@ -4,6 +4,7 @@ using EnterpriseGenAI.Core.Api.Modules.Documents.Contracts;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Domain;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Infrastructure;
 using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
 
 namespace EnterpriseGenAI.Core.Api.Modules.Documents.Application;
 
@@ -23,6 +24,73 @@ public sealed class DocumentService : IDocumentService
         _appDb = appDb ?? throw new ArgumentNullException(nameof(appDb));
         _storage = storage ?? throw new ArgumentNullException(nameof(storage));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    }
+
+    public async Task<DocumentResponse> ConfirmUploadAsync(Guid documentId, string trustedOwnerId, CancellationToken cancellationToken)
+    {
+        if (documentId == Guid.Empty)
+        {
+            throw new ArgumentException("Идентификатор документа не может быть пустым.", nameof(documentId));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(trustedOwnerId);
+        if (trustedOwnerId.Length > 256 || trustedOwnerId.Any(char.IsControl))
+        {
+            throw new ArgumentException("Некорректный идентификатор владельца.", nameof(trustedOwnerId));
+        }
+
+        var document = await _appDb.Documents.FirstOrDefaultAsync(d => d.DocumentId == documentId && d.OwnerId == trustedOwnerId, cancellationToken);
+
+        if (document is null)
+        {
+            throw new KeyNotFoundException($"Документ с идентификатором '{documentId}' не найден.");
+        }
+
+        if (document.Status == DocumentStatus.Uploaded)
+        {
+            return new DocumentResponse(
+                document.DocumentId,
+                document.FileName,
+                document.ContentType,
+                document.Size,
+                document.Checksum,
+                document.Status,
+                document.ContentVersion,
+                document.ProcessingVersion,
+                document.ReadyProcessingVersion,
+                document.CreatedAt
+            );
+        }
+
+        if (document.Status != DocumentStatus.PendingUpload)
+        {
+            throw new InvalidOperationException($"Недопустимое состояние документа для подтверждения: {document.Status}.");
+        }
+
+        var result = await _storage.StoreOriginalAsync(
+            document.TemporaryObjectKey,
+            document.DocumentId,
+            document.ContentVersion,
+            document.Size,
+            document.ContentType,
+            cancellationToken);
+
+        document.ConfirmUpload(result.ObjectKey, result.Checksum);
+
+        await _appDb.SaveChangesAsync(cancellationToken);
+
+        return new DocumentResponse(
+            document.DocumentId,
+            document.FileName,
+            document.ContentType,
+            document.Size,
+            document.Checksum,
+            document.Status,
+            document.ContentVersion,
+            document.ProcessingVersion,
+            document.ReadyProcessingVersion,
+            document.CreatedAt
+        );
     }
 
     public async Task<RegisterDocumentResponse> RegisterUploadAsync(RegisterDocumentRequest request, string trustedOwnerId, CancellationToken cancellationToken)
