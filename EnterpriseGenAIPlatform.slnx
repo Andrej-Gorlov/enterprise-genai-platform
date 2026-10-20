@@ -7,4 +7,7 @@
   <Folder Name="/tests/core-api-tests/">
     <Project Path="tests/core-api-tests/EnterpriseGenAI.Core.Api.Tests.csproj" />
   </Folder>
+  <Folder Name="/tests/document-storage-smoke/">
+    <Project Path="tests/document-storage-smoke/DocumentStorageSmoke.csproj" />
+  </Folder>
 </Solution>

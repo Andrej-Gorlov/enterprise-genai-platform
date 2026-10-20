@@ -6,7 +6,8 @@ using EnterpriseGenAI.Core.Api.Infrastructure.Http;
 using EnterpriseGenAI.Core.Api.Infrastructure.Ai;
 using Microsoft.Extensions.Options;
 using EnterpriseGenAI.Core.Api.Modules.Ai.Api;
-
+using EnterpriseGenAI.Core.Api.Modules.Documents.Infrastructure;
+using EnterpriseGenAI.Core.Api.Modules.Documents.Application;
 
 var migrateOnly = args is ["--migrate"];
 
@@ -35,6 +36,39 @@ builder.Services
         "AiOrchestrator:BaseUrl must be a valid HTTP or HTTPS URL.")
     .ValidateOnStart();
 
+
+builder.Services
+    .AddOptions<DocumentStorageOptions>()
+    .Bind(builder.Configuration.GetSection(DocumentStorageOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(
+        options =>
+            Uri.TryCreate(options.InternalEndpoint, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) &&
+            uri.AbsolutePath == "/" &&
+            string.IsNullOrEmpty(uri.UserInfo) &&
+            string.IsNullOrEmpty(uri.Query) &&
+            string.IsNullOrEmpty(uri.Fragment),
+        "DocumentStorage:InternalEndpoint must be a valid HTTP or HTTPS base URL.")
+    .Validate(
+        options =>
+            Uri.TryCreate(options.PublicEndpoint, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) &&
+            uri.AbsolutePath == "/" &&
+            string.IsNullOrEmpty(uri.UserInfo) &&
+            string.IsNullOrEmpty(uri.Query) &&
+            string.IsNullOrEmpty(uri.Fragment),
+        "DocumentStorage:PublicEndpoint must be a valid HTTP or HTTPS base URL.")
+    .Validate(
+        options =>
+            !string.IsNullOrWhiteSpace(options.BucketName) &&
+            !string.IsNullOrWhiteSpace(options.AccessKey) &&
+            !string.IsNullOrWhiteSpace(options.SecretKey),
+        "DocumentStorage configuration contains empty required values.");
+
+builder.Services.AddSingleton<DocumentS3Clients>();
+
+
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddTransient<CorrelationIdPropagationHandler>();
 builder.Services.AddHttpClient<IAiOrchestratorClient, AiOrchestratorClient>((serviceProvider, client) =>
@@ -59,6 +93,8 @@ builder.Services.AddCors(options =>
             .AllowAnyMethod();
     });
 });
+
+builder.Services.AddScoped<IDocumentStorage, MinioDocumentStorage>();
 
 var app = builder.Build();
 

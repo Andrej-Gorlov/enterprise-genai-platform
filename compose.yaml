@@ -20,6 +20,133 @@ services:
       timeout: 5s
       retries: 10
 
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    container_name: enterprise-genai-minio
+
+    command: server /data --console-address ":9001"
+
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+    volumes:
+      - minio_data:/data
+
+    restart: unless-stopped
+
+  minio-init:
+    image: public.ecr.aws/aws-cli/aws-cli:latest
+    container_name: enterprise-genai-minio-init
+
+    depends_on:
+      minio:
+        condition: service_started
+
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_PAGER: ""
+      AWS_MAX_ATTEMPTS: "1"
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:?MINIO_BUCKET_NAME is required}
+
+    entrypoint: ["/bin/sh", "-ec"]
+
+    command:
+      - |
+        attempt=0
+
+        until aws --endpoint-url http://minio:9000 \
+          --cli-connect-timeout 2 \
+          --cli-read-timeout 2 \
+          s3api list-buckets >/dev/null 2>&1; do
+
+          attempt=$$((attempt + 1))
+
+          if [ "$$attempt" -ge 30 ]; then
+            echo "MinIO S3 API is unavailable" >&2
+            exit 1
+          fi
+
+          sleep 2
+        done
+
+        if ! aws --endpoint-url http://minio:9000 \
+          s3api head-bucket --bucket "$$MINIO_BUCKET_NAME" \
+          >/dev/null 2>&1; then
+
+          aws --endpoint-url http://minio:9000 \
+            s3api create-bucket --bucket "$$MINIO_BUCKET_NAME"
+        fi
+
+        aws --endpoint-url http://minio:9000 \
+          s3api head-bucket --bucket "$$MINIO_BUCKET_NAME"
+
+        echo "MinIO bucket initialization completed."
+
+    restart: "no"
+
+  
+  minio-iam-init:
+    image: cgr.dev/chainguard/minio-client:latest-dev
+
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?MINIO_APP_ACCESS_KEY is required}
+      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?MINIO_APP_SECRET_KEY is required}
+      MC_CONFIG_DIR: /tmp/mc
+
+    volumes:
+      - ./infra/minio/documents-policy.json:/policies/documents-policy.json:ro
+      - ./infra/minio/verify-iam.sh:/checks/verify-iam.sh:ro
+
+    entrypoint: ["/bin/sh", "-ec"]
+
+    command:
+      - |
+        mc alias set local http://minio:9000 \
+          "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+
+        mc admin policy create local documents-policy \
+          /policies/documents-policy.json
+
+        if ! mc admin user info local "$$MINIO_APP_ACCESS_KEY" \
+          >/dev/null 2>&1; then
+
+          mc admin user add local \
+            "$$MINIO_APP_ACCESS_KEY" "$$MINIO_APP_SECRET_KEY" >/dev/null
+        fi
+        
+        if ! mc admin user info local "$$MINIO_APP_ACCESS_KEY" \
+          | grep -Fxq "PolicyName: documents-policy"; then
+
+          mc admin policy attach local documents-policy \
+            --user "$$MINIO_APP_ACCESS_KEY"
+        fi
+
+        if ! mc admin user info local "$$MINIO_APP_ACCESS_KEY" \
+          | grep -Fxq "PolicyName: documents-policy"; then
+
+          echo "Expected MinIO IAM policy is not assigned" >&2
+          exit 1
+        fi
+
+        echo "MinIO IAM initialization completed."
+
+    restart: "no"
+
+  
   db-migrator:
     image: enterprise-genai-core-api:dev
 
@@ -75,6 +202,13 @@ services:
       AiOrchestrator__BaseUrl: "http://ai-orchestrator:8000"
       AiOrchestrator__TimeoutSeconds: "30"
 
+      DocumentStorage__InternalEndpoint: "http://minio:9000"
+      DocumentStorage__PublicEndpoint: "http://localhost:9000"
+      DocumentStorage__BucketName: ${MINIO_BUCKET_NAME:?MINIO_BUCKET_NAME is required}
+      DocumentStorage__AccessKey: ${MINIO_APP_ACCESS_KEY:?MINIO_APP_ACCESS_KEY is required}
+      DocumentStorage__SecretKey: ${MINIO_APP_SECRET_KEY:?MINIO_APP_SECRET_KEY is required}
+      DocumentStorage__PresignedUrlExpiryMinutes: "10"
+
     ports:
       - "127.0.0.1:5091:8080"
 
@@ -88,6 +222,10 @@ services:
       ai-orchestrator:
         condition: service_healthy
 
+      minio-iam-init:
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:
   huggingface_cache:
+  minio_data:

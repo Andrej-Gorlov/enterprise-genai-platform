@@ -1,3 +1,8 @@
+
+param(
+    [switch]$WithMinioSmoke
+)
+
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -53,6 +58,87 @@ try {
     }
     finally {
         Pop-Location
+    }
+
+    if ($WithMinioSmoke) {
+        Write-Host ""
+        Write-Host "==> MinIO storage smoke test"
+
+        $envFile = Join-Path $root ".env"
+
+        $envNames = @(
+            "MINIO_APP_ACCESS_KEY",
+            "MINIO_APP_SECRET_KEY",
+            "MINIO_BUCKET_NAME"
+        )
+
+        $originalEnvValues = @{}
+
+        foreach ($name in $envNames) {
+            $originalEnvValues[$name] =
+                [Environment]::GetEnvironmentVariable($name, "Process")
+        }
+
+        try {
+            foreach ($name in $envNames) {
+                if (-not [string]::IsNullOrWhiteSpace($originalEnvValues[$name])) {
+                    continue
+                }
+
+                if (-not (Test-Path $envFile)) {
+                    throw "Missing .env file."
+                }
+
+                $line = Get-Content $envFile |
+                    Where-Object { $_.StartsWith("$name=") } |
+                    Select-Object -First 1
+
+                if (-not $line) {
+                    throw "Missing $name in .env"
+                }
+
+                $value = $line.Substring($name.Length + 1).Trim()
+
+                if ($value.Length -ge 2 -and (
+                    ($value.StartsWith('"') -and $value.EndsWith('"')) -or
+                    ($value.StartsWith("'") -and $value.EndsWith("'"))
+                )) {
+                    $value = $value.Substring(1, $value.Length - 2)
+                }
+
+                if ([string]::IsNullOrWhiteSpace($value)) {
+                    throw "Empty value for $name"
+                }
+
+                [Environment]::SetEnvironmentVariable(
+                    $name, $value, "Process")
+            }
+
+            Write-Host ""
+            Write-Host "==> Docker Compose validation"
+
+            docker compose config --quiet
+            Assert-LastExitCode "Docker Compose validation"
+
+            Write-Host ""
+            Write-Host "==> Running document storage smoke test"
+
+            dotnet run --project `
+                .\tests\document-storage-smoke\DocumentStorageSmoke.csproj
+
+            Assert-LastExitCode "MinIO storage smoke test"
+
+            Write-Host ""
+            Write-Host "MinIO storage smoke test passed."
+        }
+        finally {
+            foreach ($name in $envNames) {
+                [Environment]::SetEnvironmentVariable(
+                    $name,
+                    $originalEnvValues[$name],
+                    "Process")
+            }
+        }
     }
 }
 finally {
