@@ -146,7 +146,6 @@ services:
 
     restart: "no"
 
-  
   db-migrator:
     image: enterprise-genai-core-api:dev
 
@@ -225,7 +224,33 @@ services:
       minio-iam-init:
         condition: service_completed_successfully
 
+  rabbitmq:
+    image: rabbitmq:4.1.8-management-alpine
+    container_name: enterprise-genai-rabbitmq
+    hostname: rabbitmq
+
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   huggingface_cache:
   minio_data:
+  rabbitmq_data:
