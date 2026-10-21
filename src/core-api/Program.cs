@@ -8,6 +8,9 @@ using Microsoft.Extensions.Options;
 using EnterpriseGenAI.Core.Api.Modules.Ai.Api;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Infrastructure;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Application;
+using EnterpriseGenAI.Core.Api.Infrastructure.Identity;
+using Microsoft.AspNetCore.Authentication;
+using EnterpriseGenAI.Core.Api.Modules.Documents.Api;
 
 var migrateOnly = args is ["--migrate"];
 
@@ -67,16 +70,44 @@ builder.Services
         "DocumentStorage configuration contains empty required values.");
 
 builder.Services.AddSingleton<DocumentS3Clients>();
-
-
 builder.Services.AddHttpContextAccessor();
+
+builder.Services.AddScoped<ICurrentUser, CurrentUser>();
+
+var developmentIdentitySection = builder.Configuration.GetSection(DevelopmentIdentityOptions.SectionName);
+var developmentIdentityEnabled = developmentIdentitySection.GetValue<bool>(nameof(DevelopmentIdentityOptions.Enabled));
+
+if (developmentIdentityEnabled)
+{
+    if (!builder.Environment.IsDevelopment())
+    {
+        throw new InvalidOperationException(
+            "Аутентификация для разработки (DevelopmentIdentity:Enabled=true) разрешена только в среде разработки." +
+            "Не включайте это в рабочей среде (Production), промежуточной среде (Staging) или других подобных средах, а также не открывайте доступ к этому API в публичной сети.");
+    }
+
+    builder.Services
+        .AddOptions<DevelopmentIdentityOptions>()
+        .Bind(developmentIdentitySection)
+        .ValidateDataAnnotations()
+        .Validate(
+            o => !string.IsNullOrWhiteSpace(o.UserId) && o.UserId.Length <= 256 && !o.UserId.Any(char.IsControl),
+            "DevelopmentIdentity:UserId должен представлять собой непустую строку длиной не более 256 символов, не содержащую управляющих символов.")
+        .ValidateOnStart();
+
+    builder.Services
+        .AddAuthentication(DevelopmentAuthenticationHandler.SchemeName)
+        .AddScheme<AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(DevelopmentAuthenticationHandler.SchemeName, _ => { });
+
+    builder.Services.AddAuthorization();
+}
+
 builder.Services.AddTransient<CorrelationIdPropagationHandler>();
 builder.Services.AddHttpClient<IAiOrchestratorClient, AiOrchestratorClient>((serviceProvider, client) =>
     {
         var options = serviceProvider.GetRequiredService<IOptions<AiOrchestratorOptions>>().Value;
         client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
-        client.Timeout = TimeSpan.FromSeconds(
-options.TimeoutSeconds);
+        client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
     }).AddHttpMessageHandler<CorrelationIdPropagationHandler>();
 
 builder.Services.AddValidation();
@@ -130,9 +161,20 @@ app.UseStatusCodePages();
 
 app.UseCors("Web");
 
+if (developmentIdentityEnabled)
+{
+    app.UseAuthentication();
+    app.UseAuthorization();
+}
+
 app.MapHealthChecks("/health");
 app.MapChatEndpoints();
 app.MapAiEndpoints();
+
+if (developmentIdentityEnabled)
+{
+    app.MapDocumentEndpoints();
+}
 
 app.Run();
 
