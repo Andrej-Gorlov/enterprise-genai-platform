@@ -1,37 +1,67 @@
 
+using System.Text.Json;
 using EnterpriseGenAI.Core.Api.Infrastructure.Persistence;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Application;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Contracts;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Domain;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Infrastructure;
+using EnterpriseGenAI.Core.Api.Options;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Options;
 
 namespace EnterpriseGenAI.Core.Api.Tests.Modules.Documents;
 
 public sealed class DocumentServiceTests
 {
-    
+    private sealed class FailOnceSaveInterceptor : SaveChangesInterceptor
+    {
+        public bool FailNextSave { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (FailNextSave)
+            {
+                FailNextSave = false;
+                throw new InvalidOperationException("Имитация сбоя сохранения в PostgreSQL.");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
+    private static IOptions<EmbeddingModelOptions> CreateEmbeddingModelOptions()
+    {
+        return Microsoft.Extensions.Options.Options.Create(
+            new EmbeddingModelOptions
+            {
+                ModelId = "sentence-transformers/all-MiniLM-L6-v2",
+                ModelRevision = "main"
+            });
+    }
+
     private sealed class FakeDocumentStorage : IDocumentStorage
     {
+        private int _storeOriginalCallCount;
+
         public bool ShouldFail { get; set; }
         public bool ShouldFailStore { get; set; }
 
-        private int _storeOriginalCallCount;
+        public string LastKey { get; private set; } = string.Empty;
+        public DateTime? LastExpiry { get; private set; }
+
         public int StoreOriginalCallCount => Volatile.Read(ref _storeOriginalCallCount);
 
         public TaskCompletionSource? BothCallsStarted { get; set; }
         public TaskCompletionSource? ReleaseStoreCalls { get; set; }
 
-        public string LastKey { get; private set; } = string.Empty;
-        public DateTime? LastExpiry { get; private set; }
-
         public string CreatePresignedUploadUrl(string temporaryObjectKey, DateTime expiresAtUtc)
         {
             if (ShouldFail)
-            {
-                throw new InvalidOperationException("Имитация сбоя генерации presigned URL.");
-            }
+                throw new InvalidOperationException("Имитация сбоя создания presigned URL.");
 
             LastKey = temporaryObjectKey;
             LastExpiry = expiresAtUtc;
@@ -54,56 +84,28 @@ public sealed class DocumentServiceTests
         {
             var callCount = Interlocked.Increment(ref _storeOriginalCallCount);
 
-            if (callCount == 2)
+            // Синхронизация двух конкурентных запросов.
+            if (BothCallsStarted is not null && ReleaseStoreCalls is not null)
             {
-                BothCallsStarted?.TrySetResult();
-            }
+                if (callCount >= 2)
+                    BothCallsStarted.TrySetResult();
 
-            if (ReleaseStoreCalls is not null)
-            {
                 await ReleaseStoreCalls.Task.WaitAsync(cancellationToken);
             }
 
-            if (ShouldFailStore)
-            {
-                throw new InvalidOperationException("Имитация сбоя сохранения оригинала в MinIO.");
-            }
+            if (ShouldFail || ShouldFailStore)
+                throw new InvalidOperationException("Имитация сбоя сохранения оригинала.");
 
-            var permanentKey = $"documents/{documentId:N}/v{contentVersion}/original";
-            var checksum = new string('a', 64);
-            
-            return new StoredOriginalResult(permanentKey, expectedSize, checksum);
+            return new StoredOriginalResult($"documents/{documentId:N}/v{contentVersion}/original", expectedSize, new string('a', 64));
         }
     }
-
-    private sealed class FailOnceSaveInterceptor : SaveChangesInterceptor
-    {
-        public bool FailNextSave { get; set; }
-
-        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
-            DbContextEventData eventData,
-            InterceptionResult<int> result,
-            CancellationToken cancellationToken = default)
-        {
-            if (FailNextSave)
-            {
-                FailNextSave = false;
-
-                throw new InvalidOperationException("Имитация сбоя при сохранении в базу данных.");
-            }
-
-            return base.SavingChangesAsync(eventData, result, cancellationToken);
-        }
-    }
-
     private static (DocumentService Service, AppDbContext DbContext, FakeDocumentStorage Storage) CreateService()
     {
         var dbOptions = new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options;
-
         var dbContext = new AppDbContext(dbOptions);
         var storage = new FakeDocumentStorage();
 
-        var options = Microsoft.Extensions.Options.Options.Create(new DocumentStorageOptions
+        var storageOptions = Microsoft.Extensions.Options.Options.Create(new DocumentStorageOptions
         {
             InternalEndpoint = "http://localhost:9000",
             PublicEndpoint = "http://localhost:9000",
@@ -113,10 +115,17 @@ public sealed class DocumentServiceTests
             PresignedUrlExpiryMinutes = 10
         });
 
-        var service = new DocumentService(dbContext, storage, options);
+        var embeddingModel = new EmbeddingModelOptions
+        {
+            ModelId = "sentence-transformers/all-MiniLM-L6-v2",
+            ModelRevision = "main"
+        };
 
+        var service = new DocumentService(dbContext, storage, Microsoft.Extensions.Options.Options.Create(embeddingModel), storageOptions);
+        
         return (service, dbContext, storage);
     }
+    
 
     [Theory]
     [InlineData("document.pdf", "application/pdf")]
@@ -366,7 +375,7 @@ public sealed class DocumentServiceTests
         });
 
         await using var dbContext1 = new AppDbContext(dbOptions);
-        var service1 = new DocumentService(dbContext1, storage, options);
+        var service1 = new DocumentService(dbContext1, storage, CreateEmbeddingModelOptions(), options);
 
         const string ownerId = "user-123";
         var regResponse = await service1.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512),  ownerId,  CancellationToken.None);
@@ -374,7 +383,7 @@ public sealed class DocumentServiceTests
         interceptor.FailNextSave = true;
 
         await using var dbContext2 = new AppDbContext(dbOptions);
-        var service2 = new DocumentService(dbContext2, storage, options);
+        var service2 = new DocumentService(dbContext2, storage, CreateEmbeddingModelOptions(), options);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service2.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None));
 
@@ -383,7 +392,8 @@ public sealed class DocumentServiceTests
         Assert.Equal(DocumentStatus.PendingUpload, docInDb.Status);
 
         await using var dbContext4 = new AppDbContext(dbOptions);
-        var service4 = new DocumentService(dbContext4, storage, options);
+        
+        var service4 = new DocumentService(dbContext4, storage, CreateEmbeddingModelOptions(), options);
 
         var confirmResult = await service4.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None);
 
@@ -422,7 +432,7 @@ public sealed class DocumentServiceTests
         });
 
         await using var setupContext = new AppDbContext(dbOptions);
-        var setupService = new DocumentService(setupContext, storage, options);
+        var setupService = new DocumentService(setupContext, storage, CreateEmbeddingModelOptions(), options);
 
         const string ownerId = "user-123";
         var regResponse = await setupService.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512), ownerId, CancellationToken.None);
@@ -430,8 +440,8 @@ public sealed class DocumentServiceTests
         await using var dbContext1 = new AppDbContext(dbOptions);
         await using var dbContext2 = new AppDbContext(dbOptions);
 
-        var service1 = new DocumentService(dbContext1, storage, options);
-        var service2 = new DocumentService(dbContext2, storage, options);
+        var service1 = new DocumentService(dbContext1, storage, CreateEmbeddingModelOptions(), options);
+        var service2 = new DocumentService(dbContext2, storage, CreateEmbeddingModelOptions(), options);
 
         try
         {
@@ -480,7 +490,8 @@ public sealed class DocumentServiceTests
             Assert.Equal(2, initialCallCount);
 
             await using var retryContext = new AppDbContext(dbOptions);
-            var retryService = new DocumentService(retryContext, storage, options);
+
+            var retryService = new DocumentService(retryContext, storage, CreateEmbeddingModelOptions(), options);
 
             var retryResponse = await retryService.ConfirmUploadAsync(regResponse.DocumentId, ownerId, CancellationToken.None);
 
@@ -493,4 +504,63 @@ public sealed class DocumentServiceTests
             storage.ReleaseStoreCalls.TrySetResult();
         }
     }
+
+    [Fact]
+    public async Task QueueForIngestion_ValidUploadedDocument_CreatesJobAndOutbox()
+    {
+        var (service, dbContext, _) = CreateService();
+        await using var _ = dbContext;
+
+        const string ownerId = "user-123";
+        var reg = await service.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512), ownerId, CancellationToken.None);
+        await service.ConfirmUploadAsync(reg.DocumentId, ownerId, CancellationToken.None);
+
+        await service.QueueForIngestionAsync(reg.DocumentId, ownerId, "corr-1", CancellationToken.None);
+
+        var doc = await dbContext.Documents.AsNoTracking().SingleAsync(d => d.DocumentId == reg.DocumentId);
+        Assert.Equal(DocumentStatus.Queued, doc.Status);
+        Assert.Equal(1, doc.ProcessingVersion);
+
+        var job = await dbContext.IngestionJobs.AsNoTracking().SingleAsync();
+        Assert.Equal(reg.DocumentId, job.DocumentId);
+        Assert.Equal(1, job.ContentVersion);
+        Assert.Equal(1, job.ProcessingVersion);
+        Assert.Equal(IngestionJobStatus.Queued, job.Status);
+        Assert.Equal(0, job.AttemptCount);
+        Assert.Equal("corr-1", job.CorrelationId);
+
+        var outbox = await dbContext.OutboxMessages.AsNoTracking().SingleAsync();
+        Assert.Equal("DocumentIngestionRequested", outbox.EventType);
+        Assert.Equal(1, outbox.SchemaVersion);
+        Assert.Null(outbox.PublishedAt);
+
+        using var payload = JsonDocument.Parse(outbox.Payload);
+        var root = payload.RootElement;
+        Assert.Equal(job.JobId, root.GetProperty("JobId").GetGuid());
+        Assert.Equal(reg.DocumentId, root.GetProperty("DocumentId").GetGuid());
+        Assert.Equal(1, root.GetProperty("ContentVersion").GetInt32());
+        Assert.Equal(1, root.GetProperty("ProcessingVersion").GetInt32());
+    }
+
+    [Fact]
+    public async Task QueueForIngestion_RepeatedCall_DoesNotCreateDuplicates()
+    {
+        var (service, dbContext, _) = CreateService();
+        await using var _ = dbContext;
+
+        const string ownerId = "user-123";
+        var reg = await service.RegisterUploadAsync(new RegisterDocumentRequest("doc.pdf", "application/pdf", 512), ownerId, CancellationToken.None);
+        await service.ConfirmUploadAsync(reg.DocumentId, ownerId, CancellationToken.None);
+
+        await service.QueueForIngestionAsync(reg.DocumentId, ownerId, null, CancellationToken.None);
+        await service.QueueForIngestionAsync(reg.DocumentId, ownerId, null, CancellationToken.None);
+
+        var doc = await dbContext.Documents.AsNoTracking().SingleAsync(d => d.DocumentId == reg.DocumentId);
+        Assert.Equal(DocumentStatus.Queued, doc.Status);
+        Assert.Equal(1, doc.ProcessingVersion);
+
+        Assert.Equal(1, await dbContext.IngestionJobs.CountAsync());
+        Assert.Equal(1, await dbContext.OutboxMessages.CountAsync());
+    }
 }
+

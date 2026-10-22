@@ -32,6 +32,9 @@ public sealed class DocumentEndpointsTests
     /// </summary>
     private sealed class DocumentsApiFactory : WebApplicationFactory<Program>
     {
+        private readonly string _databaseName = $"docs-api-{Guid.NewGuid():N}";
+        private readonly InMemoryDatabaseRoot _databaseRoot = new();
+        
         protected override IHost CreateHost(IHostBuilder builder)
         {
             builder.ConfigureHostConfiguration(c => c.AddInMemoryCollection(new Dictionary<string, string?>
@@ -51,20 +54,18 @@ public sealed class DocumentEndpointsTests
             return base.CreateHost(builder);
         }
 
-        private readonly string _databaseName = $"docs-api-{Guid.NewGuid():N}";
-        private readonly InMemoryDatabaseRoot _databaseRoot = new();
-
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<AppDbContext>();
                 services.RemoveAll<DbContextOptions<AppDbContext>>();
                 services.RemoveAll<IDbContextOptionsConfiguration<AppDbContext>>();
 
-                services.AddDbContext<AppDbContext>(o =>
-                    o.UseInMemoryDatabase(_databaseName, _databaseRoot));
+                services.AddDbContext<AppDbContext>(options =>
+                    options.UseInMemoryDatabase(_databaseName, _databaseRoot));
             });
         }
     }
@@ -99,6 +100,11 @@ public sealed class DocumentEndpointsTests
             return Task.FromResult(new DocumentResponse(
                 documentId, "doc.pdf", "application/pdf", 1024, null,
                 DocumentStatus.Uploaded, 1, 0, null, DateTime.UtcNow));
+        }
+
+        public Task QueueForIngestionAsync(Guid documentId, string trustedOwnerId, string? correlationId, CancellationToken cancellationToken)
+        {
+            throw new NotImplementedException();
         }
     }
 
@@ -232,9 +238,13 @@ public sealed class DocumentEndpointsTests
         public RejectingAuthenticationHandler(
             IOptionsMonitor<AuthenticationSchemeOptions> options,
             ILoggerFactory logger,
-            UrlEncoder encoder): base(options, logger, encoder){}
+            UrlEncoder encoder): base(options, logger, encoder)
+        {
+            
+        }
 
-        protected override Task<AuthenticateResult> HandleAuthenticateAsync() => Task.FromResult(AuthenticateResult.NoResult());
+        protected override Task<AuthenticateResult> HandleAuthenticateAsync() =>
+            Task.FromResult(AuthenticateResult.NoResult());
     }
 
     [Fact]
@@ -249,7 +259,7 @@ public sealed class DocumentEndpointsTests
                 services.RemoveAll<IDocumentService>();
                 services.AddSingleton<IDocumentService>(service);
 
-                // Схема по умолчанию handler, который не аутентифицирует.
+                // Схема по умолчанию — handler, который не аутентифицирует.
                 services.AddAuthentication(options =>
                 {
                     options.DefaultAuthenticateScheme = "Rejecting";
@@ -285,29 +295,44 @@ public sealed class DocumentEndpointsTests
             });
         });
 
-        var client = factory.CreateClient(); // один host / одна БД
+        using var client = factory.CreateClient();
 
         Guid documentId;
+
         using (var scope = factory.Services.CreateScope())
         {
-            var docs = scope.ServiceProvider.GetRequiredService<IDocumentService>();
-            var reg = await docs.RegisterUploadAsync(new RegisterDocumentRequest("secret.pdf", "application/pdf", 1024), ownerB, CancellationToken.None);
-            documentId = reg.DocumentId;
+            var documentService = scope.ServiceProvider
+                .GetRequiredService<IDocumentService>();
+
+            var registration = await documentService.RegisterUploadAsync(
+                new RegisterDocumentRequest(
+                    "secret.pdf",
+                    "application/pdf",
+                    1024),
+                ownerB,
+                CancellationToken.None);
+
+            documentId = registration.DocumentId;
         }
 
-        var response = await client.PostAsync($"/documents/{documentId}/confirm", content: null);
+        using var response = await client.PostAsync(
+            $"/documents/{documentId}/confirm",
+            null);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var doc = await db.Documents.AsNoTracking().SingleAsync(x => x.DocumentId == documentId);
 
-            Assert.Equal(ownerB, doc.OwnerId);
-            Assert.Equal(DocumentStatus.PendingUpload, doc.Status);
-            Assert.Null(doc.ObjectKey);
-            Assert.Null(doc.Checksum);
+            var document = await db.Documents
+                .AsNoTracking()
+                .SingleAsync(d => d.DocumentId == documentId);
+
+            Assert.Equal(ownerB, document.OwnerId);
+            Assert.Equal(DocumentStatus.PendingUpload, document.Status);
+            Assert.Null(document.ObjectKey);
+            Assert.Null(document.Checksum);
         }
     }
 }

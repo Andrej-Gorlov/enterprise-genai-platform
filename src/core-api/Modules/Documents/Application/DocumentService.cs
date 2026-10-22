@@ -5,6 +5,10 @@ using EnterpriseGenAI.Core.Api.Modules.Documents.Domain;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Infrastructure;
 using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore;
+using EnterpriseGenAI.Core.Api.Options;
+using System.Text.Json;
+using EnterpriseGenAI.Core.Api.Infrastructure.Outbox;
+using Npgsql;
 
 namespace EnterpriseGenAI.Core.Api.Modules.Documents.Application;
 
@@ -16,14 +20,18 @@ public sealed class DocumentService : IDocumentService
     private readonly IDocumentStorage _storage;
     private readonly DocumentStorageOptions _options;
 
+    private readonly EmbeddingModelOptions _embeddingModel;
+
     public DocumentService(
         AppDbContext appDb,
         IDocumentStorage storage,
+        IOptions<EmbeddingModelOptions> embeddingModel,
         IOptions<DocumentStorageOptions> options)
     {
         _appDb = appDb ?? throw new ArgumentNullException(nameof(appDb));
         _storage = storage ?? throw new ArgumentNullException(nameof(storage));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        _embeddingModel = embeddingModel?.Value ?? throw new ArgumentNullException(nameof(embeddingModel));
     }
 
     public async Task<DocumentResponse> ConfirmUploadAsync(Guid documentId, string trustedOwnerId, CancellationToken cancellationToken)
@@ -91,6 +99,89 @@ public sealed class DocumentService : IDocumentService
             document.ReadyProcessingVersion,
             document.CreatedAt
         );
+    }
+
+    public async Task QueueForIngestionAsync(Guid documentId, string trustedOwnerId, string? correlationId, CancellationToken cancellationToken)
+    {
+        if (documentId == Guid.Empty)
+            throw new ArgumentException("Некорректный DocumentId.", nameof(documentId));
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(trustedOwnerId);
+
+        if (trustedOwnerId.Length > 256 || trustedOwnerId.Any(char.IsControl))
+            throw new ArgumentException("Некорректный OwnerId.", nameof(trustedOwnerId));
+
+        var document = await _appDb.Documents.FirstOrDefaultAsync(
+            d => d.DocumentId == documentId && d.OwnerId == trustedOwnerId, cancellationToken)
+            ?? throw new KeyNotFoundException("Документ не найден.");
+
+        if (document.Status is DocumentStatus.Queued or DocumentStatus.Processing)
+        {
+            if (await _appDb.IngestionJobs.AnyAsync(
+                j => j.DocumentId == documentId &&
+                    j.ContentVersion == document.ContentVersion &&
+                    j.ProcessingVersion == document.ProcessingVersion,
+                cancellationToken))
+                return;
+
+            throw new InvalidOperationException("Задание обработки отсутствует.");
+        }
+
+        document.QueueForProcessing();
+
+        var job = IngestionJob.CreateQueued(
+            document.DocumentId,
+            document.ContentVersion,
+            document.ProcessingVersion,
+            _embeddingModel.ModelId,
+            _embeddingModel.ModelRevision,
+            correlationId);
+
+        var outbox = OutboxMessage.Create(
+            "DocumentIngestionRequested",
+            1,
+            JsonSerializer.Serialize(new
+            {
+                job.JobId,
+                job.DocumentId,
+                job.ContentVersion,
+                job.ProcessingVersion
+            }));
+
+        _appDb.IngestionJobs.Add(job);
+        _appDb.OutboxMessages.Add(outbox);
+
+        try
+        {
+            await _appDb.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (
+            ex is DbUpdateConcurrencyException ||
+            ex.InnerException is PostgresException
+            {
+                SqlState: PostgresErrorCodes.UniqueViolation,
+                ConstraintName: "IX_ingestion_jobs_DocumentId_ProcessingVersion"
+            })
+        {
+            _appDb.Entry(document).State = EntityState.Detached;
+            _appDb.Entry(job).State = EntityState.Detached;
+            _appDb.Entry(outbox).State = EntityState.Detached;
+
+            var current = await _appDb.Documents.AsNoTracking().FirstOrDefaultAsync(d => d.DocumentId == documentId && d.OwnerId == trustedOwnerId, cancellationToken);
+
+            if (current is not null &&
+                current.Status is DocumentStatus.Queued or DocumentStatus.Processing &&
+                current.ContentVersion == job.ContentVersion &&
+                current.ProcessingVersion == job.ProcessingVersion &&
+                await _appDb.IngestionJobs.AsNoTracking().AnyAsync(
+                    j => j.DocumentId == documentId &&
+                        j.ContentVersion == job.ContentVersion &&
+                        j.ProcessingVersion == job.ProcessingVersion,
+                    cancellationToken))
+                return;
+
+            throw;
+        }
     }
 
     public async Task<RegisterDocumentResponse> RegisterUploadAsync(RegisterDocumentRequest request, string trustedOwnerId, CancellationToken cancellationToken)

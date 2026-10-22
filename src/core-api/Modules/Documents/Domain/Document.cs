@@ -135,4 +135,15 @@ public sealed class Document
         Status = DocumentStatus.Failed;
         UpdatedAt = DateTime.UtcNow;
     }
+
+    // Ставит подтверждённый документ в очередь обработки: Uploaded -> Queued
+    public void QueueForProcessing()
+    {
+        if (Status != DocumentStatus.Uploaded)
+            throw new InvalidOperationException($"Документ нельзя поставить в очередь из состояния {Status}.");
+
+        ProcessingVersion++;
+        Status = DocumentStatus.Queued;
+        UpdatedAt = DateTime.UtcNow;
+    }
 }

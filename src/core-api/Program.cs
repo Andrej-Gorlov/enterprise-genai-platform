@@ -69,6 +69,17 @@ builder.Services
             !string.IsNullOrWhiteSpace(options.SecretKey),
         "DocumentStorage configuration contains empty required values.");
 
+builder.Services
+    .AddOptions<EmbeddingModelOptions>()
+    .Bind(builder.Configuration.GetSection(EmbeddingModelOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(
+        options =>
+            !string.IsNullOrWhiteSpace(options.ModelId) &&
+            !string.IsNullOrWhiteSpace(options.ModelRevision),
+        "EmbeddingModel configuration is invalid.")
+    .ValidateOnStart();
+
 builder.Services.AddSingleton<DocumentS3Clients>();
 builder.Services.AddHttpContextAccessor();
 
