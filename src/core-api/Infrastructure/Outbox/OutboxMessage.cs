@@ -47,4 +47,13 @@ public sealed class OutboxMessage
             PublishedAt = null
         };
     }
+
+    public void MarkPublished()
+    {
+        if (PublishedAt is not null)
+        {
+            return;
+        }
+        PublishedAt = DateTime.UtcNow;
+    }
 }

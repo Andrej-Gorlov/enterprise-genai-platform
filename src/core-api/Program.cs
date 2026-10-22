@@ -11,6 +11,8 @@ using EnterpriseGenAI.Core.Api.Modules.Documents.Application;
 using EnterpriseGenAI.Core.Api.Infrastructure.Identity;
 using Microsoft.AspNetCore.Authentication;
 using EnterpriseGenAI.Core.Api.Modules.Documents.Api;
+using EnterpriseGenAI.Core.Api.Infrastructure.Messaging;
+using EnterpriseGenAI.Core.Api.Infrastructure.Outbox;
 
 var migrateOnly = args is ["--migrate"];
 
@@ -139,6 +141,21 @@ builder.Services.AddCors(options =>
 builder.Services.AddScoped<IDocumentStorage, MinioDocumentStorage>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 
+builder.Services
+    .AddOptions<RabbitMqOptions>()
+    .Bind(builder.Configuration.GetSection(RabbitMqOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddSingleton<IRabbitMqMessagePublisher, RabbitMqMessagePublisher>();
+
+var outboxPublisherEnabled = builder.Configuration.GetValue("OutboxPublisher:Enabled", false);
+
+if (!migrateOnly && outboxPublisherEnabled)
+{
+    builder.Services.AddHostedService<OutboxPublisherBackgroundService>();
+}
+
 var app = builder.Build();
 
 if (migrateOnly)
@@ -149,15 +166,15 @@ if (migrateOnly)
 
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        app.Logger.LogInformation("Checking database migrations...");
+        app.Logger.LogInformation("Проверка миграций базы данных...");
 
         await dbContext.Database.MigrateAsync();
 
-        app.Logger.LogInformation("Database migrations are up to date.");
+        app.Logger.LogInformation("Миграции базы данных актуальны.");
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "Database migration failed.");
+        app.Logger.LogError(ex, "Миграция базы данных завершилась неудачей.");
         Environment.ExitCode = 1;
     }
 

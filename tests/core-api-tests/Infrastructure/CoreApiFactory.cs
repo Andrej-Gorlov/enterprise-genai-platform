@@ -26,6 +26,20 @@ public sealed class CoreApiFactory : WebApplicationFactory<Program>
                     ["AiOrchestrator:TimeoutSeconds"] = "30"
                 });
         });
+
+        builder.ConfigureAppConfiguration((_, configuration) =>
+        {
+            configuration.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["RabbitMq:HostName"] = "localhost",
+                    ["RabbitMq:Port"] = "5672",
+                    ["RabbitMq:UserName"] = "test-user",
+                    ["RabbitMq:Password"] = "test-password",
+                    ["RabbitMq:VirtualHost"] = "/",
+                    ["OutboxPublisher:Enabled"] = "false"
+                });
+        });
         return base.CreateHost(builder);
     }
 
@@ -42,6 +56,7 @@ public sealed class CoreApiFactory : WebApplicationFactory<Program>
             services.AddDbContext<AppDbContext>(options => options.UseInMemoryDatabase(_databaseName));
         });
     }
+    
 
     public void ResetDatabase()
     {

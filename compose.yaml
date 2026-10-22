@@ -92,7 +92,6 @@ services:
 
     restart: "no"
 
-  
   minio-iam-init:
     image: cgr.dev/chainguard/minio-client:latest-dev
 
@@ -195,6 +194,12 @@ services:
 
     environment:
       ASPNETCORE_ENVIRONMENT: Development
+      RabbitMq__HostName: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__UserName: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+      RabbitMq__VirtualHost: "/"
+      OutboxPublisher__Enabled: "true"
 
       ConnectionStrings__Database: "Host=postgres;Port=5432;Database=enterprise_genai;Username=enterprise_genai;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
 

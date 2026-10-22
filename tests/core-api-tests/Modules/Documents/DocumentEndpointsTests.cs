@@ -67,6 +67,20 @@ public sealed class DocumentEndpointsTests
                 services.AddDbContext<AppDbContext>(options =>
                     options.UseInMemoryDatabase(_databaseName, _databaseRoot));
             });
+
+            builder.ConfigureAppConfiguration((_, configuration) =>
+            {
+                configuration.AddInMemoryCollection(
+                    new Dictionary<string, string?>
+                    {
+                        ["RabbitMq:HostName"] = "localhost",
+                        ["RabbitMq:Port"] = "5672",
+                        ["RabbitMq:UserName"] = "test-user",
+                        ["RabbitMq:Password"] = "test-password",
+                        ["RabbitMq:VirtualHost"] = "/",
+                        ["OutboxPublisher:Enabled"] = "false"
+                    });
+            });
         }
     }
 
