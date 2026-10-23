@@ -263,6 +263,11 @@ services:
 
     environment:
       DOTNET_ENVIRONMENT: Development
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__Port: "5672"
+      RabbitMq__UserName: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+      RabbitMq__VirtualHost: "/"
 
     depends_on:
       rabbitmq:
