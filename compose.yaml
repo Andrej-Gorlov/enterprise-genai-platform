@@ -254,6 +254,20 @@ services:
 
     restart: unless-stopped
 
+  document-ingestion-worker:
+    image: enterprise-genai-document-ingestion-worker:dev
+
+    build:
+      context: .
+      dockerfile: src/document-ingestion-worker/Dockerfile
+
+    environment:
+      DOTNET_ENVIRONMENT: Development
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   huggingface_cache:
