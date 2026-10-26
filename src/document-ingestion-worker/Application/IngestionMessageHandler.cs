@@ -2,16 +2,20 @@ using EnterpriseGenAI.DocumentIngestion.Worker.Contracts;
 
 namespace EnterpriseGenAI.DocumentIngestion.Worker.Application;
 
-public sealed class IngestionMessageHandler(ILogger<IngestionMessageHandler> logger) : IIngestionMessageHandler
+public sealed class IngestionMessageHandler(IIngestionJobClaimer claimer, ILogger<IngestionMessageHandler> logger) : IIngestionMessageHandler
 {
-    public Task HandleAsync(DocumentIngestionRequested message, CancellationToken cancellationToken)
+    public async Task HandleAsync(DocumentIngestionRequested message, CancellationToken cancellationToken)
     {
-        // Временный компромисс: только диагностика, обработка не завершена, ack нет.
-        logger.LogWarning("Ingestion not implemented yet. JobId={JobId} DocumentId={DocumentId} ContentVersion={ContentVersion} ProcessingVersion={ProcessingVersion}. Message left unacked.",
-            message.JobId,
-            message.DocumentId,
-            message.ContentVersion,
-            message.ProcessingVersion);
-        return Task.CompletedTask;
+        var result = await claimer.TryClaimAsync(message, cancellationToken);
+
+        if (result is IngestionClaimResult.Acquired acquired)
+        {
+            logger.LogInformation(
+                "Задача по приему данных взята в обработку. JobId={JobId}, LeaseUntil={LeaseUntil:O}. Сообщение оставлено без подтверждения получения (unacked).", acquired.JobId, acquired.LeaseUntil);
+            
+            return;
+        }
+
+        logger.LogInformation("Задача по приему данных не была получена. JobId={JobId}. Сообщение осталось без подтверждения получения.", message.JobId);
     }
 }

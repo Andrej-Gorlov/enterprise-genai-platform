@@ -269,8 +269,13 @@ services:
       RabbitMq__Password: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
       RabbitMq__VirtualHost: "/"
 
+      ConnectionStrings__Database: "Host=postgres;Port=5432;Database=enterprise_genai;Username=enterprise_genai;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+
     depends_on:
       rabbitmq:
+        condition: service_healthy
+
+      postgres:
         condition: service_healthy
 
 volumes:
