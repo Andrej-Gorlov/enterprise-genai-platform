@@ -30,8 +30,10 @@ builder.Services
     .ValidateOnStart();
 
 builder.Services.AddSingleton<IIngestionJobClaimer, PostgresIngestionJobClaimer>();
+builder.Services.AddSingleton<IIngestionLeaseManager, PostgresIngestionLeaseManager>();
 builder.Services.AddSingleton<IIngestionMessageHandler, IngestionMessageHandler>();
 builder.Services.AddSingleton<RabbitMqConsumer>();
+
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
